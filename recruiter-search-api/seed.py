@@ -1,50 +1,121 @@
 from datetime import date, timedelta
+import random
+
+from faker import Faker
+
 from database import Base, engine, SessionLocal
 from models import Candidate, CandidateSkill, Experience
 
-Base.metadata.create_all(engine)  # creates the tables if they don't exist
+Base.metadata.create_all(engine)
 
+fake = Faker("en_IN")
 today = date.today()
 
+NUM_CANDIDATES = 1000
 
-def months_ago(n: int) -> date:
-    return today - timedelta(days=30 * n)
-
-
-# (name, email, [(skill, months since last used, total months)])
-SAMPLE = [
-    ("Aarav Mehta",   "aarav@example.com",   [("python", 0, 60), ("sql", 0, 48)]),
-    ("Diya Sharma",   "diya@example.com",    [("python", 2, 36), ("react", 1, 24)]),
-    ("Rohan Iyer",    "rohan@example.com",   [("python", 10, 72), ("django", 10, 40)]),
-    ("Sneha Patil",   "sneha@example.com",   [("python", 30, 24), ("java", 6, 50)]),
-    ("Kabir Singh",   "kabir@example.com",   [("java", 0, 84), ("sql", 3, 60)]),
-    ("Meera Nair",    "meera@example.com",   [("react", 0, 40), ("typescript", 0, 36)]),
-    ("Arjun Rao",     "arjun@example.com",   [("python", 5, 18), ("fastapi", 5, 12)]),
-    ("Isha Kulkarni", "isha@example.com",    [("python", 48, 30), ("sql", 12, 20)]),
+SKILLS = [
+    "python", "sql", "java", "javascript", "typescript",
+    "react", "nodejs", "fastapi", "django",
+    "postgresql", "mongodb", "aws", "docker",
+    "kubernetes", "pytorch", "tensorflow", "machine learning",
+    "nlp", "llm", "langchain"
 ]
+
+COMPANIES = [
+    "TCS", "Infosys", "Accenture", "Wipro", "Cognizant",
+    "Capgemini", "Tech Mahindra", "Persistent Systems",
+    "Zoho", "Freshworks", "Microsoft", "Amazon",
+    "Google", "Deloitte", "GenieHire"
+]
+
+TITLES = [
+    "Software Engineer",
+    "Backend Developer",
+    "Frontend Developer",
+    "Full Stack Developer",
+    "Python Developer",
+    "AI Engineer",
+    "ML Engineer",
+    "Data Scientist",
+    "Senior Software Engineer",
+    "Software Developer"
+]
+
+
+def months_ago(months: int) -> date:
+    return today - timedelta(days=30 * months)
+
+
+def random_experience():
+    end_months_ago = random.randint(0, 24)
+    duration_months = random.randint(6, 60)
+
+    end_date = months_ago(end_months_ago)
+    start_date = end_date - timedelta(days=30 * duration_months)
+
+    return start_date, end_date
+
 
 db = SessionLocal()
 
-# Clear old rows so re-running the seed doesn't create duplicates
-db.query(CandidateSkill).delete()
-db.query(Experience).delete()
-db.query(Candidate).delete()
-db.commit()
+try:
+    print("Clearing old data...")
 
-for name, email, skills in SAMPLE:
-    c = Candidate(name=name, email=email)
-    c.experiences.append(
-        Experience(company="Sample Corp", title="Software Engineer",
-                   start_date=date(2021, 1, 1), end_date=None)
-    )
-    for skill, last_used_months_ago, total in skills:
-        c.skills.append(
-            CandidateSkill(skill=skill,
-                           last_used_date=months_ago(last_used_months_ago),
-                           total_months=total)
+    db.query(CandidateSkill).delete()
+    db.query(Experience).delete()
+    db.query(Candidate).delete()
+    db.commit()
+
+    print("Generating candidates...")
+
+    candidates = []
+
+    for _ in range(NUM_CANDIDATES):
+        candidate = Candidate(
+            name=fake.name(),
+            email=fake.unique.email()
         )
-    db.add(c)
 
-db.commit()
-print(f"Seeded {len(SAMPLE)} candidates")
-db.close()
+        skill_count = random.randint(3, 8)
+        candidate_skills = random.sample(SKILLS, skill_count)
+
+        for skill in candidate_skills:
+            last_used_months_ago = random.randint(0, 60)
+            total_months = random.randint(6, 96)
+
+            candidate.skills.append(
+                CandidateSkill(
+                    skill=skill,
+                    last_used_date=months_ago(last_used_months_ago),
+                    total_months=total_months
+                )
+            )
+
+        experience_count = random.randint(1, 4)
+
+        for _ in range(experience_count):
+            start_date, end_date = random_experience()
+
+            candidate.experiences.append(
+                Experience(
+                    company=random.choice(COMPANIES),
+                    title=random.choice(TITLES),
+                    start_date=start_date,
+                    end_date=end_date
+                )
+            )
+
+        candidates.append(candidate)
+
+    db.add_all(candidates)
+    db.commit()
+
+    total_skills = db.query(CandidateSkill).count()
+    total_experiences = db.query(Experience).count()
+
+    print(f"Seeded {NUM_CANDIDATES} candidates")
+    print(f"Seeded {total_skills} candidate skills")
+    print(f"Seeded {total_experiences} experiences")
+
+finally:
+    db.close()

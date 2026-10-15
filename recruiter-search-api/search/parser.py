@@ -1,10 +1,8 @@
 import re
 
-
 DEFAULT_RECENT_MONTHS = 12
 DEFAULT_LIMIT = 10
 MAX_LIMIT = 100
-
 
 ALIASES = {
     "js": "javascript",
@@ -34,8 +32,7 @@ def _extract_requested_count(query: str) -> tuple[int, str]:
             count = max(1, min(count, MAX_LIMIT))
 
             cleaned_query = (
-                query[:match.start()]
-                + query[match.end():]
+                query[:match.start()] + query[match.end():]
             )
 
             return count, cleaned_query
@@ -59,8 +56,7 @@ def _extract_recency(query: str) -> tuple[int | None, str]:
         months = value * 12 if unit.startswith("year") else value
 
         cleaned_query = (
-            query[:match.start()]
-            + query[match.end():]
+            query[:match.start()] + query[match.end():]
         )
 
         return months, cleaned_query
@@ -69,8 +65,7 @@ def _extract_recency(query: str) -> tuple[int | None, str]:
 
     if match:
         cleaned_query = (
-            query[:match.start()]
-            + query[match.end():]
+            query[:match.start()] + query[match.end():]
         )
 
         return 12, cleaned_query
@@ -79,8 +74,7 @@ def _extract_recency(query: str) -> tuple[int | None, str]:
 
     if match:
         cleaned_query = (
-            query[:match.start()]
-            + query[match.end():]
+            query[:match.start()] + query[match.end():]
         )
 
         return DEFAULT_RECENT_MONTHS, cleaned_query
@@ -101,8 +95,7 @@ def _extract_experience(query: str) -> tuple[int | None, str]:
             years = int(match.group(1))
 
             cleaned_query = (
-                query[:match.start()]
-                + query[match.end():]
+                query[:match.start()] + query[match.end():]
             )
 
             return years, cleaned_query
@@ -115,15 +108,9 @@ def _extract_skills(
     known_skills: list[str],
 ) -> list[str]:
 
-    known = {
-        skill.lower()
-        for skill in known_skills
-    }
+    known = {skill.lower() for skill in known_skills}
 
-    terms = {
-        skill: skill
-        for skill in known
-    }
+    terms = {skill: skill for skill in known}
 
     for alias, canonical in ALIASES.items():
         if canonical in known:
@@ -132,13 +119,53 @@ def _extract_skills(
     skills = []
 
     for term, canonical in terms.items():
-
         if re.search(_word_pattern(term), query):
-
             if canonical not in skills:
                 skills.append(canonical)
 
     return skills
+
+
+def _clean_semantic_requirement(
+    query: str,
+    skills: list[str],
+) -> str | None:
+
+    q = query
+
+    filler_patterns = [
+        r"\bfind\b",
+        r"\bget\b",
+        r"\bshow\b",
+        r"\breturn\b",
+        r"\bgive\b",
+        r"\bbring\b",
+        r"\bcandidates?\b",
+        r"\bpeople\b",
+        r"\bdevelopers?\b",
+        r"\bengineers?\b",
+        r"\bwho\b",
+        r"\bthat\b",
+        r"\bhas\b",
+        r"\bhave\b",
+        r"\bused\b",
+        r"\bworked\s+with\b",
+    ]
+
+    for pattern in filler_patterns:
+        q = re.sub(pattern, " ", q)
+
+    for skill in skills:
+        q = re.sub(_word_pattern(skill), " ", q)
+
+    q = re.sub(r"\s+", " ", q).strip()
+
+    q = re.sub(r"^with\s*$", "", q)
+    q = re.sub(r"^and\s*$", "", q)
+
+    q = q.strip()
+
+    return q if q else None
 
 
 def parse_query(
@@ -159,7 +186,10 @@ def parse_query(
         known_skills,
     )
 
-    semantic_requirement = q.strip()
+    semantic_requirement = _clean_semantic_requirement(
+        q,
+        skills,
+    )
 
     return {
         "requested_count": requested_count,
