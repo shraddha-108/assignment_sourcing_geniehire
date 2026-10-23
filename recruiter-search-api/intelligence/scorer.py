@@ -1,65 +1,148 @@
 from datetime import date
 
 
-def recency_score(last_used_date):
-    if not last_used_date:
-        return 0
+def recency_score(
+    last_used_date: date | None,
+    recency_months: int | None,
+) -> float:
 
-    days_since_used = (
-        date.today() - last_used_date
-    ).days
+    if recency_months is None:
+        return 100.0
 
-    score = 100 - (
-        days_since_used / (5 * 365)
-    ) * 100
+    if last_used_date is None:
+        return 0.0
 
-    return max(0, min(100, score))
+    cutoff_date = date.today().replace(
+        day=1,
+    )
+
+    months_difference = (
+        (cutoff_date.year - last_used_date.year) * 12
+        + cutoff_date.month
+        - last_used_date.month
+    )
+
+    if months_difference <= 0:
+        return 100.0
+
+    if months_difference >= recency_months:
+        return 0.0
+
+    return round(
+        100 * (
+            1
+            - months_difference / recency_months
+        ),
+        2,
+    )
 
 
-def experience_score(total_months):
-    score = (
-        total_months / 60
-    ) * 100
+def experience_score(
+    total_months: int,
+    minimum_years: float | None,
+) -> float:
 
-    return max(0, min(100, score))
+    if minimum_years is None:
+        return 100.0
+
+    required_months = minimum_years * 12
+
+    if required_months <= 0:
+        return 100.0
+
+    if total_months >= required_months:
+        return 100.0
+
+    return round(
+        (total_months / required_months) * 100,
+        2,
+    )
 
 
 def skill_score(
-    last_used_date,
-    total_months,
-):
+    last_used_date: date | None,
+    total_months: int,
+    recency_months: int | None,
+    minimum_years: float | None,
+) -> float:
+
     recency = recency_score(
-        last_used_date
+        last_used_date,
+        recency_months,
     )
 
     experience = experience_score(
-        total_months
+        total_months,
+        minimum_years,
     )
 
-    return (
-        recency * 0.60
-        + experience * 0.40
+    return round(
+        (recency * 0.6)
+        + (experience * 0.4),
+        2,
     )
 
 
 def score_candidates(
     candidates: list[dict],
+    requirements: dict,
 ) -> list[dict]:
 
     scored = []
 
-    for item in candidates:
+    recency_scope = requirements.get(
+        "recency_scope"
+    )
+
+    # Recency should only be applied to the
+    # structured skill when the recruiter means
+    # recent use of that skill.
+    #
+    # Example:
+    # "Python developers with recent Python experience"
+    # -> SKILL
+    #
+    # "Python developers who recently worked on
+    # machine learning projects"
+    # -> SEMANTIC
+    #
+    # In the second case, Python's last_used_date
+    # must NOT be used to prove recent ML work.
+    structured_recency_months = None
+
+    if (
+        recency_scope is None
+        or recency_scope == "SKILL"
+    ):
+        structured_recency_months = (
+            requirements.get(
+                "recency_months"
+            )
+        )
+
+    for candidate in candidates:
 
         score = skill_score(
-            item["last_used_date"],
-            item["total_months"],
+            last_used_date=(
+                candidate["last_used_date"]
+            ),
+            total_months=(
+                candidate["total_months"]
+            ),
+            recency_months=(
+                structured_recency_months
+            ),
+            minimum_years=(
+                requirements.get(
+                    "experience_min_years"
+                )
+            ),
         )
 
-        scored.append(
-            {
-                **item,
-                "score": round(score, 2),
-            }
-        )
+        item = dict(candidate)
+
+        item["score"] = score
+
+        scored.append(item)
 
     return scored

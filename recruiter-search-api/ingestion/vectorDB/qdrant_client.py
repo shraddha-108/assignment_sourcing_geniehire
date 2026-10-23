@@ -1,12 +1,14 @@
 from uuid import NAMESPACE_URL, uuid5
 
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client import QdrantClient, models
 
 
 QDRANT_URL = "http://localhost:6333"
-COLLECTION_NAME = "candidate_evidence"
-VECTOR_SIZE = 384
+COLLECTION_NAME = "candidate_evidence_hybrid"
+DENSE_VECTOR_SIZE = 384
+
+DENSE_VECTOR_NAME = "dense"
+SPARSE_VECTOR_NAME = "bm25"
 
 
 client = QdrantClient(
@@ -15,7 +17,11 @@ client = QdrantClient(
 
 
 def create_collection() -> None:
-    collections = client.get_collections().collections
+
+    collections = (
+        client.get_collections()
+        .collections
+    )
 
     if any(
         collection.name == COLLECTION_NAME
@@ -25,10 +31,21 @@ def create_collection() -> None:
 
     client.create_collection(
         collection_name=COLLECTION_NAME,
-        vectors_config=VectorParams(
-            size=VECTOR_SIZE,
-            distance=Distance.COSINE,
-        ),
+        vectors_config={
+            DENSE_VECTOR_NAME: (
+                models.VectorParams(
+                    size=DENSE_VECTOR_SIZE,
+                    distance=models.Distance.COSINE,
+                )
+            )
+        },
+        sparse_vectors_config={
+            SPARSE_VECTOR_NAME: (
+                models.SparseVectorParams(
+                    modifier=models.Modifier.IDF,
+                )
+            )
+        },
     )
 
 
@@ -39,6 +56,7 @@ def upsert_evidence(
     section: str,
     text: str,
     vector: list[float],
+    metadata: dict | None = None,
 ) -> None:
 
     create_collection()
@@ -50,16 +68,35 @@ def upsert_evidence(
         )
     )
 
-    point = PointStruct(
+    payload = {
+        "candidate_id": candidate_id,
+        "chunk_id": chunk_id,
+        "chunk_type": chunk_type,
+        "section": section,
+        "text": text,
+    }
+
+    if metadata:
+        payload.update(
+            {
+                key: value
+                for key, value in metadata.items()
+                if value is not None
+            }
+        )
+
+    point = models.PointStruct(
         id=point_id,
-        vector=vector,
-        payload={
-            "candidate_id": candidate_id,
-            "chunk_id": chunk_id,
-            "chunk_type": chunk_type,
-            "section": section,
-            "text": text,
+        vector={
+            DENSE_VECTOR_NAME: vector,
+            SPARSE_VECTOR_NAME: (
+                models.Document(
+                    text=text,
+                    model="Qdrant/bm25",
+                )
+            ),
         },
+        payload=payload,
     )
 
     client.upsert(

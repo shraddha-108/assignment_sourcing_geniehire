@@ -1,91 +1,30 @@
-from typing import Any
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from search.classifier import (
+    SearchRequirement,
+    StructuredRequirements,
+)
 
 
-def validate_parsed_query(
-    parsed: dict[str, Any],
-) -> dict[str, Any]:
+class RoutingPacket(BaseModel):
+    original_query: str
+    requested_count: int = Field(ge=1)
+    count_explicit: bool
 
-    errors = []
+    route: Literal[
+        "STRUCTURED",
+        "SEMANTIC",
+        "HYBRID",
+    ]
 
-    requested_count = parsed.get("requested_count")
-
-    if not isinstance(requested_count, int):
-        errors.append(
-            "requested_count must be an integer"
-        )
-    elif requested_count < 1:
-        errors.append(
-            "requested_count must be at least 1"
-        )
-
-    structured = parsed.get(
-        "structured_requirements"
+    requirements: list[SearchRequirement] = Field(
+        default_factory=list
     )
 
-    if not isinstance(structured, dict):
-        errors.append(
-            "structured_requirements must be an object"
-        )
-        structured = {}
+    structured_requirements: StructuredRequirements
 
-    skills = structured.get("skills", [])
+    semantic_requirement: str | None = None
 
-    if not isinstance(skills, list):
-        errors.append(
-            "skills must be a list"
-        )
-
-    recency_months = structured.get(
-        "recency_months"
-    )
-
-    if recency_months is not None:
-
-        if not isinstance(recency_months, int):
-            errors.append(
-                "recency_months must be an integer"
-            )
-
-        elif recency_months < 0:
-            errors.append(
-                "recency_months cannot be negative"
-            )
-
-    experience_min_years = structured.get(
-        "experience_min_years"
-    )
-
-    if experience_min_years is not None:
-
-        if not isinstance(
-            experience_min_years,
-            int,
-        ):
-            errors.append(
-                "experience_min_years must be an integer"
-            )
-
-        elif experience_min_years < 0:
-            errors.append(
-                "experience_min_years cannot be negative"
-            )
-
-    semantic_requirement = parsed.get(
-        "semantic_requirement"
-    )
-
-    if (
-        semantic_requirement is not None
-        and not isinstance(
-            semantic_requirement,
-            str,
-        )
-    ):
-        errors.append(
-            "semantic_requirement must be a string or null"
-        )
-
-    return {
-        "valid": len(errors) == 0,
-        "errors": errors,
-    }
+    route_reason: str

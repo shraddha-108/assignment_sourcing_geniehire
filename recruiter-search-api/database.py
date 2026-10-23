@@ -5,7 +5,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
-load_dotenv()
+
+load_dotenv(override=True)
+
 
 DATABASE_URL = URL.create(
     drivername="postgresql+psycopg2",
@@ -16,8 +18,17 @@ DATABASE_URL = URL.create(
     database=os.getenv("DB_NAME", "recruiter_search"),
 )
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False)
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+)
+
+
+SessionLocal = sessionmaker(
+    bind=engine,
+    autoflush=False,
+)
 
 
 class Base(DeclarativeBase):
@@ -26,7 +37,8 @@ class Base(DeclarativeBase):
 
 def get_db():
     db = SessionLocal()
+
     try:
         yield db
     finally:
-        db.close()
+        db.close() 

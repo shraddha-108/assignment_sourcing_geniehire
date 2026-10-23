@@ -1,7 +1,10 @@
-from search.parser import parse_query
-from search.validator import validate_parsed_query
-from search.router import route_query
-from search.exclusion import extract_exclusions
+from search.classifier import (
+    classify_search_intent,
+)
+
+from search.validator import (
+    RoutingPacket,
+)
 
 
 def build_routing_packet(
@@ -9,41 +12,31 @@ def build_routing_packet(
     known_skills: list[str],
 ) -> dict:
 
-    parsed = parse_query(
-        query=query,
+    original_query = query.strip()
+
+    intent = classify_search_intent(
+        query=original_query,
         known_skills=known_skills,
     )
 
-    validation = validate_parsed_query(
-        parsed
+    routing_packet = RoutingPacket(
+        original_query=original_query,
+        requested_count=intent.requested_count,
+        count_explicit=intent.count_explicit,
+        route=intent.route,
+        requirements=intent.requirements,
+        structured_requirements=(
+            intent.structured_requirements
+        ),
+        semantic_requirement=(
+            intent.semantic_requirement
+        ),
+        route_reason=intent.reason,
     )
-
-    if not validation["valid"]:
-        return {
-            "valid": False,
-            "errors": validation["errors"],
-        }
-
-    exclusions = extract_exclusions(
-        query
-    )
-
-    route = route_query(parsed)
 
     return {
         "valid": True,
-        "route": route,
-        "routing_packet": {
-            "original_query": query,
-            "requested_count": parsed[
-                "requested_count"
-            ],
-            "structured_requirements": parsed[
-                "structured_requirements"
-            ],
-            "semantic_requirement": parsed[
-                "semantic_requirement"
-            ],
-            "exclusions": exclusions,
-        },
+        "errors": [],
+        "route": routing_packet.route,
+        "routing_packet": routing_packet.model_dump(),
     }

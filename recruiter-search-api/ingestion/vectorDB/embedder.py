@@ -1,18 +1,20 @@
-from sentence_transformers import SentenceTransformer
+from langchain_huggingface import HuggingFaceEmbeddings
+
 
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
-model = SentenceTransformer(MODEL_NAME)
+
+embeddings = HuggingFaceEmbeddings(
+    model_name=MODEL_NAME,
+    encode_kwargs={
+        "normalize_embeddings": True,
+    },
+)
 
 
 def embed_text(text: str) -> list[float]:
-    vector = model.encode(
-        text,
-        normalize_embeddings=True,
-    )
-
-    return vector.tolist()
+    return embeddings.embed_query(text)
 
 
 def embedding_dimension() -> int:
-    return model.get_sentence_embedding_dimension()
+    return embeddings.client.get_sentence_embedding_dimension()

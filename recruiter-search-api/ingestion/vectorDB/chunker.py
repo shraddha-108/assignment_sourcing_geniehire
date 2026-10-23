@@ -1,105 +1,41 @@
 import re
+from datetime import date, datetime
 
 
-SECTION_PATTERNS = {
-    "summary": [
-        r"summary",
-        r"profile",
-        r"professional summary",
-        r"career summary",
-        r"about me",
-        r"objective",
-        r"career objective",
-        r"profile summary",
-    ],
-    "technical_skills": [
-        r"technical skills",
-        r"technical skill",
-        r"skills",
-        r"key skills",
-        r"core skills",
-        r"core competencies",
-        r"skills summary",
-        r"technical expertise",
-        r"technologies",
-        r"technology stack",
-    ],
-    "experience": [
-        r"experience",
-        r"work experience",
-        r"professional experience",
-        r"employment history",
-        r"work history",
-        r"professional experience",
-    ],
-    "projects": [
-        r"projects",
-        r"personal projects",
-        r"academic projects",
-        r"key projects",
-        r"project experience",
-    ],
-    "achievements": [
-        r"achievements",
-        r"accomplishments",
-        r"awards",
-        r"honors",
-    ],
-    "education": [
-        r"education",
-        r"academic background",
-        r"qualifications",
-        r"educational background",
-    ],
-}
+DEFAULT_CHUNK_SIZE = 500
+DEFAULT_OVERLAP = 50
 
 
-def normalize_heading(line: str) -> str:
-    line = line.strip().lower()
-    line = re.sub(r"[^a-z\s]", " ", line)
-    line = re.sub(r"\s+", " ", line)
-    return line.strip()
+def _to_iso_date(
+    value,
+) -> str | None:
+    if value is None:
+        return None
+
+    if isinstance(
+        value,
+        datetime,
+    ):
+        return value.date().isoformat()
+
+    if isinstance(
+        value,
+        date,
+    ):
+        return value.isoformat()
+
+    value = str(value).strip()
+
+    if not value:
+        return None
+
+    return value
 
 
-def detect_section(line: str) -> str | None:
-    normalized = normalize_heading(line)
-
-    for section, patterns in SECTION_PATTERNS.items():
-        for pattern in patterns:
-            if re.fullmatch(pattern, normalized):
-                return section
-
-    return None
-
-
-def detect_inline_section(line: str) -> tuple[str | None, str]:
-    original = line.strip()
-    normalized = normalize_heading(original)
-
-    for section, patterns in SECTION_PATTERNS.items():
-        for pattern in patterns:
-            if re.match(
-                rf"^{pattern}(?:\s*[:\-–—]\s*|\s+|$)",
-                normalized,
-                re.IGNORECASE,
-            ):
-                match = re.match(
-                    rf"^{pattern}(?:\s*[:\-–—]\s*|\s+|$)",
-                    original,
-                    re.IGNORECASE,
-                )
-
-                if match:
-                    remaining = original[match.end():].strip()
-                    return section, remaining
-
-    return None, original
-
-
-def split_into_chunks(
+def _split_long_text(
     text: str,
-    chunk_size: int = 500,
-    overlap: int = 50,
+    chunk_size: int,
+    overlap: int,
 ) -> list[str]:
     words = text.split()
 
@@ -110,9 +46,15 @@ def split_into_chunks(
     start = 0
 
     while start < len(words):
-        end = min(start + chunk_size, len(words))
 
-        chunk = " ".join(words[start:end]).strip()
+        end = min(
+            start + chunk_size,
+            len(words),
+        )
+
+        chunk = " ".join(
+            words[start:end]
+        ).strip()
 
         if chunk:
             chunks.append(chunk)
@@ -120,85 +62,344 @@ def split_into_chunks(
         if end == len(words):
             break
 
-        start = end - overlap
+        next_start = end - overlap
+
+        if next_start <= start:
+            next_start = end
+
+        start = next_start
 
     return chunks
 
 
-def create_chunks(
-    candidate_id: int,
+def _extract_evidence_units(
     text: str,
-) -> list[dict]:
-    lines = text.splitlines()
+) -> list[str]:
+    """
+    Preserve natural evidence boundaries before
+    combining them into retrieval chunks.
 
-    sections = []
-    current_section = "summary"
-    current_lines = []
+    Resume evidence commonly contains:
+    - bullet points
+    - separate responsibilities
+    - separate project statements
+    - paragraphs
 
-    for raw_line in lines:
-        line = raw_line.strip()
+    We preserve those boundaries instead of immediately
+    flattening everything into one 500-word block.
+    """
+
+    if not text:
+        return []
+
+    normalized = text.replace(
+        "\r\n",
+        "\n",
+    ).replace(
+        "\r",
+        "\n",
+    )
+
+    raw_lines = normalized.split("\n")
+
+    units = []
+
+    for line in raw_lines:
+
+        line = line.strip()
 
         if not line:
             continue
 
-        exact_section = detect_section(line)
+        # Remove common bullet markers while preserving
+        # the actual evidence wording.
+        line = re.sub(
+            r"^[\-\*\u2022\u2023\u25E6]+\s*",
+            "",
+            line,
+        ).strip()
 
-        if exact_section:
-            if current_lines:
-                sections.append({
-                    "section": current_section,
-                    "text": "\n".join(current_lines),
-                })
-
-            current_section = exact_section
-            current_lines = []
+        if not line:
             continue
 
-        inline_section, remaining_text = detect_inline_section(line)
+        units.append(line)
 
-        if inline_section:
-            if current_lines:
-                sections.append({
-                    "section": current_section,
-                    "text": "\n".join(current_lines),
-                })
+    if units:
+        return units
 
-            current_section = inline_section
-            current_lines = []
+    return [
+        normalized.strip()
+    ]
 
-            if remaining_text:
-                current_lines.append(remaining_text)
+
+def _build_chunks_from_units(
+    units: list[str],
+    chunk_size: int,
+    overlap: int,
+) -> list[str]:
+    """
+    Combine nearby evidence units while preserving
+    their natural boundaries.
+
+    A single evidence unit larger than chunk_size is
+    split independently.
+    """
+
+    chunks = []
+    current_units = []
+    current_word_count = 0
+
+    for unit in units:
+
+        unit_word_count = len(
+            unit.split()
+        )
+
+        if unit_word_count > chunk_size:
+
+            if current_units:
+                chunks.append(
+                    "\n".join(
+                        current_units
+                    ).strip()
+                )
+
+                current_units = []
+                current_word_count = 0
+
+            long_chunks = _split_long_text(
+                text=unit,
+                chunk_size=chunk_size,
+                overlap=overlap,
+            )
+
+            chunks.extend(
+                long_chunks
+            )
 
             continue
 
-        current_lines.append(line)
+        if (
+            current_units
+            and current_word_count
+            + unit_word_count
+            > chunk_size
+        ):
+            chunks.append(
+                "\n".join(
+                    current_units
+                ).strip()
+            )
 
-    if current_lines:
-        sections.append({
-            "section": current_section,
-            "text": "\n".join(current_lines),
-        })
+            # Keep a small amount of recent context.
+            overlap_units = []
+            overlap_words = 0
+
+            for previous_unit in reversed(
+                current_units
+            ):
+                previous_words = len(
+                    previous_unit.split()
+                )
+
+                if (
+                    overlap_words
+                    + previous_words
+                    > overlap
+                ):
+                    break
+
+                overlap_units.insert(
+                    0,
+                    previous_unit,
+                )
+
+                overlap_words += previous_words
+
+            current_units = overlap_units
+            current_word_count = overlap_words
+
+        current_units.append(unit)
+        current_word_count += unit_word_count
+
+    if current_units:
+        chunks.append(
+            "\n".join(
+                current_units
+            ).strip()
+        )
+
+    return [
+        chunk
+        for chunk in chunks
+        if chunk
+    ]
+
+
+def split_into_chunks(
+    text: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    overlap: int = DEFAULT_OVERLAP,
+) -> list[str]:
+    """
+    Split text into retrieval-friendly chunks.
+
+    Unlike the previous implementation, this first
+    respects natural line/bullet boundaries and only
+    splits individual evidence units when they are
+    larger than the target size.
+    """
+
+    if not text or not text.strip():
+        return []
+
+    units = _extract_evidence_units(
+        text
+    )
+
+    return _build_chunks_from_units(
+        units=units,
+        chunk_size=chunk_size,
+        overlap=overlap,
+    )
+
+
+def create_chunks(
+    candidate_id: int,
+    candidate_data: dict,
+) -> list[dict]:
 
     chunks = []
     chunk_id = 0
 
-    for section in sections:
+    evidence = candidate_data.get(
+        "evidence",
+        {},
+    )
 
-        if section["section"] == "technical_skills":
+    # ---------------------------------------------------------
+    # SUMMARY
+    # ---------------------------------------------------------
+
+    summary = evidence.get(
+        "summary",
+        "",
+    )
+
+    if summary:
+
+        for chunk_text in split_into_chunks(
+            summary
+        ):
+            chunks.append(
+                {
+                    "candidate_id": candidate_id,
+                    "chunk_id": chunk_id,
+                    "chunk_type": "summary",
+                    "section": "summary",
+                    "text": chunk_text,
+                }
+            )
+
+            chunk_id += 1
+
+    # ---------------------------------------------------------
+    # EXPERIENCE
+    # ---------------------------------------------------------
+
+    for experience in candidate_data.get(
+        "experiences",
+        [],
+    ):
+
+        experience_evidence = experience.get(
+            "evidence",
+            "",
+        )
+
+        if not experience_evidence:
             continue
 
+        company = experience.get(
+            "company"
+        )
+
+        title = experience.get(
+            "title"
+        )
+
+        start_date = _to_iso_date(
+            experience.get(
+                "start_date"
+            )
+        )
+
+        end_date = _to_iso_date(
+            experience.get(
+                "end_date"
+            )
+        )
+
         text_chunks = split_into_chunks(
-            section["text"]
+            experience_evidence
         )
 
         for chunk_text in text_chunks:
-            chunks.append({
-                "candidate_id": candidate_id,
-                "chunk_id": chunk_id,
-                "chunk_type": section["section"],
-                "section": section["section"],
-                "text": chunk_text,
-            })
+
+            chunks.append(
+                {
+                    "candidate_id": candidate_id,
+                    "chunk_id": chunk_id,
+                    "chunk_type": "experience",
+                    "section": "experience",
+                    "company": company,
+                    "job_title": title,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "text": chunk_text,
+                }
+            )
+
+            chunk_id += 1
+
+    # ---------------------------------------------------------
+    # PROJECTS
+    # ---------------------------------------------------------
+
+    for project in evidence.get(
+        "projects",
+        [],
+    ):
+
+        project_title = project.get(
+            "title",
+            "",
+        )
+
+        project_evidence = project.get(
+            "evidence",
+            "",
+        )
+
+        if not project_evidence:
+            continue
+
+        text_chunks = split_into_chunks(
+            project_evidence
+        )
+
+        for chunk_text in text_chunks:
+
+            chunks.append(
+                {
+                    "candidate_id": candidate_id,
+                    "chunk_id": chunk_id,
+                    "chunk_type": "project",
+                    "section": "projects",
+                    "project_title": project_title,
+                    "text": chunk_text,
+                }
+            )
 
             chunk_id += 1
 

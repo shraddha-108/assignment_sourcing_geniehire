@@ -1,0 +1,811 @@
+{
+  "summary": {
+    "resumes_evaluated": 10,
+    "resumes_skipped": 0,
+    "average_score": 0.6617,
+    "weights": {
+      "experience_f1": 0.2,
+      "date_accuracy": 0.1,
+      "skills_f1": 0.2,
+      "total_experience": 0.1,
+      "experience_evidence_f1": 0.15,
+      "projects_f1": 0.1,
+      "education_f1": 0.05,
+      "summary": 0.05,
+      "achievements_f1": 0.03,
+      "name": 0.01,
+      "email": 0.005,
+      "phone": 0.005
+    }
+  },
+  "results": [
+    {
+      "resume": "ABHISHEK_MITTAL",
+      "file": "ABHISHEK_MITTAL_Functional_Consultant_Finance_7_TO_10_years.pdf",
+      "name": {
+        "predicted": "ABHISHEK MITTAL",
+        "actual": "ABHISHEK MITTAL",
+        "score": 1.0
+      },
+      "email": {
+        "predicted": "abhi0669@gmail.com",
+        "actual": "abhi0669@gmail.com",
+        "score": 1.0
+      },
+      "phone": {
+        "predicted": "+91 9620188983",
+        "actual": "+91 9820189983",
+        "score": 0.0
+      },
+      "experiences": {
+        "predicted_count": 8,
+        "actual_count": 9,
+        "matched_count": 8,
+        "precision": 1.0,
+        "recall": 0.8889,
+        "f1": 0.9412,
+        "date_accuracy": 1.0
+      },
+      "skills": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "total_experience": {
+        "predicted": 205,
+        "actual": 205,
+        "score": 1.0
+      },
+      "evidence": {
+        "summary": {
+          "predicted": "Seasoned finance professional with 15+ years of experience in financial management, audits, and compliance across multinational subsidiaries. Expertise in statutory audits, IT General Control audits, cash flow analysis, and financial reporting. Proven track record in ERP migrations (MS D365, AX 2012, Tally) and process optimization to enhance accuracy and efficiency. Skilled in managing accounts payable, fixed assets, VAT/tax filings, and book closure activities. Recognized for delivering audit excellence, ensuring regulatory compliance, and driving finance transformation initiatives",
+          "actual": "Seasoned finance professional with 15+ years of experience in financial management, audits, and compliance across multinational subsidiaries. Expertise in statutory audits, IT General Control audits, cash flow analysis, and financial reporting. Proven track record in ERP migrations (MS D365, AX 2012, Tally) and process optimization to enhance accuracy and efficiency. Skilled in managing accounts payable, fixed assets, VAT/tax filings, and bond closure activities. Recognized for delivering audit excellence, ensuring regulatory compliance, and driving finance transformation initiatives.",
+          "score": 0.988
+        },
+        "experience": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 8,
+          "matched_count": 0
+        },
+        "projects": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "achievements": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 5,
+          "actual_count": 5,
+          "matched_count": 5,
+          "average_similarity": 0.9869
+        },
+        "education": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 3,
+          "actual_count": 3,
+          "matched_count": 3,
+          "average_similarity": 1.0
+        }
+      },
+      "overall_score": 0.8326
+    },
+    {
+      "resume": "ABHISHEK_PREMKUMAR_SAWALE",
+      "file": "Abhishek_Premkumar_Sawale_FullStack_Developer_Python_and_React.pdf",
+      "name": {
+        "predicted": "Abhishek Premkumar Sawale",
+        "actual": "Abhishek PreMkumar Sawale",
+        "score": 1.0
+      },
+      "email": {
+        "predicted": "sawaleabhishek1@gmail.com",
+        "actual": "sawaleabhishek1@gmail.com",
+        "score": 1.0
+      },
+      "phone": {
+        "predicted": "+91 9834749278",
+        "actual": "+91 9817492789",
+        "score": 0.0
+      },
+      "experiences": {
+        "predicted_count": 1,
+        "actual_count": 1,
+        "matched_count": 1,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "date_accuracy": 0.5
+      },
+      "skills": {
+        "precision": 0.8621,
+        "recall": 0.8621,
+        "f1": 0.8621
+      },
+      "total_experience": {
+        "predicted": 45,
+        "actual": 21,
+        "score": 0.0
+      },
+      "evidence": {
+        "summary": {
+          "predicted": "Python Backend Developer with 3+ years of experience building scalable backend applications using Python, Django and Flask. Experienced in REST APIs, Microservices, PostgreSQL, MySQL, Redis, Docker, Jenkins, Git, AWS, JWT, OAuth2 and CI/CD. Strong background in backend architecture, API integration, performance optimization, distributed systems and production support.",
+          "actual": "Python Backend Developer with 3+ years of experience building scalable backend applications using Python, Django and Flask. Experienced in REST APIs, Microservices, PostgreSQL, MySQL, Redis, Docker, Jenkins, Git, AWS, JWT, and CI/CD. Strong background in backend architecture, API integration, performance optimization, distributed systems, and production support.",
+          "score": 0.9524
+        },
+        "experience": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 1,
+          "matched_count": 0
+        },
+        "projects": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 2,
+          "matched_count": 0
+        },
+        "achievements": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "education": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 3,
+          "matched_count": 0
+        }
+      },
+      "overall_score": 0.515
+    },
+    {
+      "resume": "ADITI_JAIN",
+      "file": "ADITI_JAIN_Content_Strategist.pdf",
+      "name": {
+        "predicted": "ADITI JAIN",
+        "actual": "ADITI JAIN",
+        "score": 1.0
+      },
+      "email": {
+        "predicted": "officialaditijain@gmail.com",
+        "actual": "officialaditijain@gmail.com",
+        "score": 1.0
+      },
+      "phone": {
+        "predicted": "+91 70038 99384",
+        "actual": "+91 70038 99384",
+        "score": 1.0
+      },
+      "experiences": {
+        "predicted_count": 5,
+        "actual_count": 7,
+        "matched_count": 4,
+        "precision": 0.8,
+        "recall": 0.5714,
+        "f1": 0.6667,
+        "date_accuracy": 0.75
+      },
+      "skills": {
+        "precision": 0.3692,
+        "recall": 0.6486,
+        "f1": 0.4706
+      },
+      "total_experience": {
+        "predicted": 41,
+        "actual": 49,
+        "score": 0.0
+      },
+      "evidence": {
+        "summary": {
+          "predicted": "",
+          "actual": "",
+          "score": 1.0
+        },
+        "experience": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 7,
+          "matched_count": 0
+        },
+        "projects": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 12,
+          "matched_count": 0
+        },
+        "achievements": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "education": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 4,
+          "matched_count": 0
+        }
+      },
+      "overall_score": 0.4025
+    },
+    {
+      "resume": "ADITYA_BELE",
+      "file": "Aditya_Bele_Content_Strategist.pdf",
+      "name": {
+        "predicted": "Aditya Bele",
+        "actual": "Aditya Bele",
+        "score": 1.0
+      },
+      "email": {
+        "predicted": "Belea882@gmai.com",
+        "actual": "bele882@gmail.com",
+        "score": 0.0
+      },
+      "phone": {
+        "predicted": "+91 9130360391",
+        "actual": "+91 9130360391",
+        "score": 1.0
+      },
+      "experiences": {
+        "predicted_count": 6,
+        "actual_count": 6,
+        "matched_count": 6,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "date_accuracy": 1.0
+      },
+      "skills": {
+        "precision": 0.8125,
+        "recall": 1.0,
+        "f1": 0.8966
+      },
+      "total_experience": {
+        "predicted": 56,
+        "actual": 56,
+        "score": 1.0
+      },
+      "evidence": {
+        "summary": {
+          "predicted": "",
+          "actual": "",
+          "score": 1.0
+        },
+        "experience": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 6,
+          "matched_count": 0
+        },
+        "projects": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "achievements": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 4,
+          "matched_count": 0
+        },
+        "education": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 4,
+          "matched_count": 0
+        }
+      },
+      "overall_score": 0.7443
+    },
+    {
+      "resume": "ADITYA_DALVI",
+      "file": "Aditya_Dalvi_FullStack_Developer_Python_and_React.pdf",
+      "name": {
+        "predicted": "Aditya Dalvi",
+        "actual": "Aditya Dalvi",
+        "score": 1.0
+      },
+      "email": {
+        "predicted": "adityadalvi.216@gmail.com",
+        "actual": "adityadalvi.216@gmail.com",
+        "score": 1.0
+      },
+      "phone": {
+        "predicted": "8888596705",
+        "actual": "888596705",
+        "score": 0.0
+      },
+      "experiences": {
+        "predicted_count": 3,
+        "actual_count": 3,
+        "matched_count": 3,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "date_accuracy": 1.0
+      },
+      "skills": {
+        "precision": 0.6552,
+        "recall": 0.7917,
+        "f1": 0.717
+      },
+      "total_experience": {
+        "predicted": 35,
+        "actual": 35,
+        "score": 1.0
+      },
+      "evidence": {
+        "summary": {
+          "predicted": "Backend Engineer with 3 years of experience specializing in Python, Node.js and JavaScript performance optimization, and AI tool integrations. Analytical problem-solver with a proven track record of resolving complex bottlenecks and deploying services on AWS (EC2, S3). Adept at leveraging modern development tools, including Docker, Git, and AI-assisted workflows, to deliver reliable cloud applications.",
+          "actual": "Backend Engineer with 3 years of experience specializing in Python, Node.js and JavaScript performance optimization, and AI tool integrations. Analytical problem-solver with a proven track record of resolving complex bottlenecks and deploying services on AWS (EC2, S3). Adept at leveraging modern development tools, including Docker, Git, and AI-assisted workflows, to deliver reliable cloud applications.",
+          "score": 1.0
+        },
+        "experience": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 3,
+          "matched_count": 0
+        },
+        "projects": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 2,
+          "matched_count": 0
+        },
+        "achievements": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "education": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 1,
+          "matched_count": 0
+        }
+      },
+      "overall_score": 0.6384
+    },
+    {
+      "resume": "ADITYA_INGAWALE",
+      "file": "ADITYA_INGAWALE_FullStack_Developer_Python_and_React.pdf",
+      "name": {
+        "predicted": "ADITYA INGAWALE",
+        "actual": "ADITYA INGAWALE",
+        "score": 1.0
+      },
+      "email": {
+        "predicted": "adityaingawale5002@gmail.com",
+        "actual": "adityaingawale5002@gmail.com",
+        "score": 1.0
+      },
+      "phone": {
+        "predicted": "+91 9699331392",
+        "actual": "+91 9699331392",
+        "score": 1.0
+      },
+      "experiences": {
+        "predicted_count": 2,
+        "actual_count": 2,
+        "matched_count": 2,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "date_accuracy": 1.0
+      },
+      "skills": {
+        "precision": 0.9851,
+        "recall": 0.9041,
+        "f1": 0.9429
+      },
+      "total_experience": {
+        "predicted": 32,
+        "actual": 32,
+        "score": 1.0
+      },
+      "evidence": {
+        "summary": {
+          "predicted": "Results-driven Python Backend Developer with 2.6 years of experience building scalable, secure, and cloud-native applications using Python, Django, Django REST Framework, FastAPI, AWS, Docker, Kubernetes, PostgreSQL, and Microservices. Experienced in REST API development, JWT Authentication, Swagger/OpenAPI, CI/CD, system design, design patterns, database optimization, and asynchronous processing using Celery and Redis. Proven track record of improving API performance, automating deployments, and delivering high-quality production solutions in Agile environments.",
+          "actual": "Results-driven Python Backend Developer with 2.6 years of experience building scalable, secure, and cloud-native applications using Python, Django, Django REST Framework, FastAPI, AWS, Docker, Kubernetes, PostgreSQL, and Microservices.",
+          "score": 0.6148
+        },
+        "experience": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 5,
+          "matched_count": 0
+        },
+        "projects": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 2,
+          "matched_count": 0
+        },
+        "achievements": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "education": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 1,
+          "matched_count": 0
+        }
+      },
+      "overall_score": 0.6693
+    },
+    {
+      "resume": "ADITYA_PINGALE",
+      "file": "ADITYA_PINGALE_Content_Strategist.pdf",
+      "name": {
+        "predicted": "ADITYA PINGALE",
+        "actual": "ADITYA PINGALE",
+        "score": 1.0
+      },
+      "email": {
+        "predicted": "adipingale22@gmail.com",
+        "actual": "adipingale22@gmail.com",
+        "score": 1.0
+      },
+      "phone": {
+        "predicted": "+91 70307-18514",
+        "actual": "+91 70307-18514",
+        "score": 1.0
+      },
+      "experiences": {
+        "predicted_count": 4,
+        "actual_count": 4,
+        "matched_count": 4,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "date_accuracy": 0.875
+      },
+      "skills": {
+        "precision": 0.3667,
+        "recall": 0.5789,
+        "f1": 0.449
+      },
+      "total_experience": {
+        "predicted": 59,
+        "actual": 56,
+        "score": 0.7
+      },
+      "evidence": {
+        "summary": {
+          "predicted": "I am a results-driven Social Media Manager with a creative edge and a strong focus on digital marketing. With a proven track record in content creation, video editing, and advertising, I bring an integrated approach to boost brand presence and drive business growth.",
+          "actual": "I am a results-driven Social Media Manager with a creative edge and a strong focus on digital marketing. With a proven track record in content creation, video editing, and advertising, I bring an integrated approach to boost brand presence and drive business growth.",
+          "score": 1.0
+        },
+        "experience": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 6,
+          "matched_count": 0
+        },
+        "projects": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "achievements": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "education": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 1,
+          "actual_count": 1,
+          "matched_count": 1,
+          "average_similarity": 0.8385
+        }
+      },
+      "overall_score": 0.6973
+    },
+    {
+      "resume": "Aditya_Sharma",
+      "file": "Aditya_Sharma_FullStack_Developer_Python_and_React.pdf",
+      "name": {
+        "predicted": "Aditya Sharma",
+        "actual": "Aditya Sharma",
+        "score": 1.0
+      },
+      "email": {
+        "predicted": "adityasharmatbn9@gmail.com",
+        "actual": "adityasharmatbn9@gmail.com",
+        "score": 1.0
+      },
+      "phone": {
+        "predicted": "+91 7466958767",
+        "actual": "+91 7466958767",
+        "score": 1.0
+      },
+      "experiences": {
+        "predicted_count": 2,
+        "actual_count": 2,
+        "matched_count": 2,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "date_accuracy": 1.0
+      },
+      "skills": {
+        "precision": 0.8571,
+        "recall": 0.8889,
+        "f1": 0.8727
+      },
+      "total_experience": {
+        "predicted": 37,
+        "actual": 37,
+        "score": 1.0
+      },
+      "evidence": {
+        "summary": {
+          "predicted": "Software Engineer with 2+ years of experience in Python, Full-Stack Development, Cloud Infrastructure, and DevOps. Proficient in AWS, Docker, Kubernetes, FastAPI, Node.js, React.js, REST APIs, and CI/CD pipelines. Strong foundation in Data Structures & Algorithms, OOPs, DBMS, Operating Systems, and Linux.",
+          "actual": "Software Engineer with 2+ years of experience in Python, Full-Stack Development, Cloud Infrastructure, and DevOps. Proficient in AWS, Docker, Kubernetes, FastAPI, Node.js, React.js, REST APIs, and CI/CD pipelines.",
+          "score": 0.844
+        },
+        "experience": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 5,
+          "matched_count": 0
+        },
+        "projects": {
+          "precision": 0.5,
+          "recall": 0.25,
+          "f1": 0.3333,
+          "predicted_count": 2,
+          "actual_count": 4,
+          "matched_count": 1,
+          "average_similarity": 0.5274
+        },
+        "achievements": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 3,
+          "actual_count": 3,
+          "matched_count": 3,
+          "average_similarity": 1.0
+        },
+        "education": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 1,
+          "actual_count": 1,
+          "matched_count": 1,
+          "average_similarity": 0.9687
+        }
+      },
+      "overall_score": 0.7501
+    },
+    {
+      "resume": "ADRIEL_PETER_ALMEIDA",
+      "file": "ADRIEL_PETER_ALMEIDA_Content_Strategist.pdf",
+      "name": {
+        "predicted": "ADRIEL PETER ALMEIDA",
+        "actual": "ADRIEL PETER ALMEIDA",
+        "score": 1.0
+      },
+      "email": {
+        "predicted": "almeidaadriel833@gmail.com",
+        "actual": "almeidaadriel833@gmail.com",
+        "score": 1.0
+      },
+      "phone": {
+        "predicted": "+91 - 7020107338",
+        "actual": "+91 - 7020107338",
+        "score": 1.0
+      },
+      "experiences": {
+        "predicted_count": 8,
+        "actual_count": 8,
+        "matched_count": 8,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "date_accuracy": 1.0
+      },
+      "skills": {
+        "precision": 0.5,
+        "recall": 0.0656,
+        "f1": 0.1159
+      },
+      "total_experience": {
+        "predicted": 63,
+        "actual": 63,
+        "score": 1.0
+      },
+      "evidence": {
+        "summary": {
+          "predicted": "Creative Communications Specialist | Internal Comms | Multimedia & Digital Content. Results-driven communications and media professional with 3+ years of experience in communications, digital media production, stakeholder engagement, and cross-functional coordination across diverse organisations. Skilled in creating, managing, and executing communication strategies, ranging from internal updates, newsletters, leadership messaging, and change communication to external-facing digital campaigns, publications, and multimedia content.",
+          "actual": "Results-driven communications and media professional with 3+ years of experience in communications, digital media production, stakeholder engagement, and cross-functional coordination across diverse organisations.",
+          "score": 0.6258
+        },
+        "experience": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 8,
+          "matched_count": 0
+        },
+        "projects": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "achievements": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "education": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 2,
+          "matched_count": 0
+        }
+      },
+      "overall_score": 0.6045
+    },
+    {
+      "resume": "Akshata_Tadasmath",
+      "file": "Akshata_Tadasmath_Functional_Consultant_Finance_7_TO_10_years.pdf",
+      "name": {
+        "predicted": "Akshata Tadasmath",
+        "actual": "Akshata Tadasmath",
+        "score": 1.0
+      },
+      "email": {
+        "predicted": "tadasmathakshata@gmail.com",
+        "actual": "tadasmathakshata@gmail.com",
+        "score": 1.0
+      },
+      "phone": {
+        "predicted": "9972624829",
+        "actual": "9972624829",
+        "score": 1.0
+      },
+      "experiences": {
+        "predicted_count": 4,
+        "actual_count": 4,
+        "matched_count": 4,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "date_accuracy": 1.0
+      },
+      "skills": {
+        "precision": 0.7083,
+        "recall": 0.7727,
+        "f1": 0.7391
+      },
+      "total_experience": {
+        "predicted": 96,
+        "actual": 96,
+        "score": 1.0
+      },
+      "evidence": {
+        "summary": {
+          "predicted": "Results-driven Finance professional with 7+ years of experience in Billing, Accounts Receivable, and End-to-End Order-to-Cash (O2C) operations. Strong expertise in invoice validation, revenue assurance, cash application, dispute resolution, AR reporting across global regions. Proven track record of improving billing accuracy, reducing revenue leakages. Seeking Senior Analyst / Lead roles in Billing and Accounts Receivable",
+          "actual": "Results-driven Finance professional with 7+ years of experience in Billing, Accounts Receivable, and End-to-End Order-to-Cash (O2C) operations.",
+          "score": 0.5745
+        },
+        "experience": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predicted_count": 0,
+          "actual_count": 7,
+          "matched_count": 0
+        },
+        "projects": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "predicted_count": 0,
+          "actual_count": 0,
+          "matched_count": 0
+        },
+        "achievements": {
+          "precision": 0.6667,
+          "recall": 1.0,
+          "f1": 0.8,
+          "predicted_count": 6,
+          "actual_count": 4,
+          "matched_count": 4,
+          "average_similarity": 1.0
+        },
+        "education": {
+          "precision": 1.0,
+          "recall": 0.75,
+          "f1": 0.8571,
+          "predicted_count": 3,
+          "actual_count": 4,
+          "matched_count": 3,
+          "average_similarity": 1.0
+        }
+      },
+      "overall_score": 0.7634
+    }
+  ]
+}

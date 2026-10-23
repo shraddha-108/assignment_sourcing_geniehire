@@ -1,6 +1,7 @@
 def rank_candidates(
     candidates: list[dict],
     requested_count: int,
+    count_explicit: bool,
 ) -> list[dict]:
 
     candidates.sort(
@@ -8,4 +9,7 @@ def rank_candidates(
         reverse=True,
     )
 
-    return candidates[:requested_count]
+    if count_explicit:
+        return candidates[:requested_count]
+
+    return candidates
