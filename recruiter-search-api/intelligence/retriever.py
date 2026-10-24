@@ -15,10 +15,10 @@ from ingestion.vectorDB.qdrant_client import (
 )
 
 
-SEMANTIC_RETRIEVAL_MIN_SCORE = float(
+SEMANTIC_RETRIEVAL_LIMIT = int(
     os.getenv(
-        "SEMANTIC_RETRIEVAL_MIN_SCORE",
-        "0.10",
+        "SEMANTIC_RETRIEVAL_LIMIT",
+        "200",
     )
 )
 
@@ -92,12 +92,10 @@ def _role_matches_title(
 
     The structured layer only treats a role as satisfied when
     the meaningful words from the requested role are present
-    in an actual Experience.title. This favors precision over
-    semantic recall so unrelated roles do not pass merely
-    because the candidate has related skills or industry evidence.
+    in an actual Experience.title.
 
-    Semantic role equivalence should be handled later by a
-    dedicated semantic evaluator rather than guessed here.
+    Semantic role equivalence should be handled later by
+    semantic evaluation rather than guessed here.
     """
 
     if not role or not title:
@@ -343,72 +341,132 @@ def retrieve_structured_candidates(
     return results
 
 
-def retrieve_semantic_candidates(
+def _semantic_query_variants(
     query: str,
-    limit: int = 100,
-    candidate_ids: list[int] | None = None,
-    recency_months: int | None = None,
-    requirements: list[dict] | None = None,
-    min_retrieval_score: float | None = None,
-) -> list[dict]:
+    requirements: list[dict] | None,
+) -> list[str]:
+    """
+    Build multiple retrieval formulations to improve recall.
 
-    dense_query = embed_text(query)
+    Retrieval is intentionally broad here. These variants are
+    discovery queries only; they do not qualify a candidate.
+    """
 
-    filter_conditions = []
+    variants: list[str] = []
 
-    # Hybrid search restricts semantic retrieval
-    # to candidates who already satisfied the
-    # structured requirements.
-    if candidate_ids:
+    def add(value) -> None:
+        value = str(
+            value or ""
+        ).strip()
 
-        filter_conditions.append(
-            models.FieldCondition(
-                key="candidate_id",
-                match=models.MatchAny(
-                    any=candidate_ids
-                ),
+        if not value:
+            return
+
+        normalized = " ".join(
+            value.lower().split()
+        )
+
+        if any(
+            " ".join(
+                existing.lower().split()
             )
+            == normalized
+            for existing in variants
+        ):
+            return
+
+        variants.append(value)
+
+    add(query)
+
+    for requirement in requirements or []:
+        if not isinstance(
+            requirement,
+            dict,
+        ):
+            continue
+
+        value = requirement.get(
+            "value"
         )
 
-    # IMPORTANT:
-    # Do not turn semantic recency into an Experience-only
-    # retrieval filter.
-    #
-    # Retrieval should find evidence relevant to the semantic
-    # requirement first. Validation is responsible for deciding
-    # whether that evidence actually proves the requested
-    # recency.
-    #
-    # Example:
-    # "recently built machine learning projects"
-    #
-    # A Project chunk may be the strongest evidence that the
-    # candidate built an ML project, even though the current
-    # Project chunk model has no date.
-    #
-    # We must NOT reject that evidence during retrieval, and we
-    # must NOT borrow an unrelated Experience date and treat it
-    # as the project's date.
-    #
-    # The validation layer should distinguish:
-    #   1. requirement supported + recent
-    #   2. requirement supported + not recent
-    #   3. requirement supported but recency cannot be established
-    #
-    # requirements is carried forward with each result so the
-    # downstream validation layer knows which semantic claim is
-    # being evaluated.
-    semantic_requirements = requirements or []
-
-    query_filter = None
-
-    if filter_conditions:
-
-        query_filter = models.Filter(
-            must=filter_conditions
+        evidence_query = requirement.get(
+            "evidence_query"
         )
 
-    response = client.query_points(
+        add(evidence_query)
+        add(value)
+
+        requirement_type = str(
+            requirement.get(
+                "type",
+                "",
+            )
+            or ""
+        ).upper()
+
+        if requirement_type == "ACTIVITY":
+            if evidence_query:
+                add(
+                    f"candidate experience involving {evidence_query}"
+                )
+
+                add(
+                    f"professional work involving {evidence_query}"
+                )
+
+                add(
+                    f"projects involving {evidence_query}"
+                )
+
+            if value:
+                add(
+                    f"candidate experience with {value}"
+                )
+
+                add(
+                    f"professional work with {value}"
+                )
+
+        elif requirement_type == "INDUSTRY":
+            if evidence_query:
+                add(
+                    f"industry experience in {evidence_query}"
+                )
+
+                add(
+                    f"professional experience in {evidence_query}"
+                )
+
+            if value:
+                add(
+                    f"industry experience in {value}"
+                )
+
+        elif requirement_type == "OTHER":
+            if evidence_query:
+                add(
+                    f"professional experience related to {evidence_query}"
+                )
+
+            if value:
+                add(
+                    f"professional experience related to {value}"
+                )
+
+    return variants
+
+
+def _query_semantic_points(
+    query: str,
+    limit: int,
+    query_filter,
+):
+    dense_query = embed_text(
+        query
+    )
+
+    return client.query_points(
         collection_name=COLLECTION_NAME,
         prefetch=[
             models.Prefetch(
@@ -435,103 +493,190 @@ def retrieve_semantic_candidates(
         with_vectors=False,
     )
 
-    # Kept for backward compatibility with callers that still
-    # provide recency_months. The value is intentionally not
-    # used as a blanket Experience-only filter here.
-    #
-    # Temporal validation belongs to the requirement-level
-    # validation stage because the current vector chunks do not
-    # have dates for every evidence type.
-    cutoff_date = None
 
+def retrieve_semantic_candidates(
+    query: str,
+    limit: int = SEMANTIC_RETRIEVAL_LIMIT,
+    candidate_ids: list[int] | None = None,
+    recency_months: int | None = None,
+    requirements: list[dict] | None = None,
+    min_retrieval_score: float | None = None,
+) -> list[dict]:
+    """
+    Retrieve semantic evidence broadly.
+
+    This function is a discovery layer only.
+
+    It must not decide whether a candidate qualifies for a
+    recruiter requirement. Qualification happens downstream
+    in the validator.
+
+    Dense + sparse retrieval are combined through Qdrant RRF.
+    Multiple query formulations are used to improve recall.
+    """
+
+    semantic_requirements = (
+        requirements or []
+    )
+
+    query_variants = _semantic_query_variants(
+        query,
+        semantic_requirements,
+    )
+
+    if not query_variants:
+        return []
+
+    filter_conditions = []
+
+    if candidate_ids:
+        filter_conditions.append(
+            models.FieldCondition(
+                key="candidate_id",
+                match=models.MatchAny(
+                    any=candidate_ids
+                ),
+            )
+        )
+
+    query_filter = (
+        models.Filter(
+            must=filter_conditions
+        )
+        if filter_conditions
+        else None
+    )
+
+    # Semantic recency is deliberately not used
+    # as a Qdrant filter.
+    #
+    # The retrieved evidence must first be available
+    # to the validator so it can determine whether the
+    # relevant evidence itself is recent.
     if recency_months is not None:
-        cutoff_date = _cutoff_date(
+        _ = _cutoff_date(
             recency_months
         )
 
-    results = []
-
+    # Keep the argument for backward compatibility,
+    # but do not use a default retrieval-score floor.
+    #
+    # Qdrant RRF scores are rank-fusion scores rather
+    # than cosine similarities. A hard absolute floor
+    # can silently remove potentially valid evidence.
+    #
+    # Qualification belongs downstream.
     retrieval_score_threshold = (
-        SEMANTIC_RETRIEVAL_MIN_SCORE
+        None
         if min_retrieval_score is None
-        else min_retrieval_score
+        else float(
+            min_retrieval_score
+        )
     )
 
-    seen = set()
+    merged: dict[
+        tuple,
+        dict,
+    ] = {}
 
-    for point in response.points:
+    for query_variant in query_variants:
 
-        payload = point.payload or {}
-
-        chunk_type = payload.get(
-            "chunk_type"
+        response = _query_semantic_points(
+            query_variant,
+            limit,
+            query_filter,
         )
 
-        if chunk_type == "education":
-            continue
+        for point in response.points:
 
-        candidate_id = payload.get(
-            "candidate_id"
-        )
+            payload = point.payload or {}
 
-        chunk_id = payload.get(
-            "chunk_id"
-        )
+            if payload.get(
+                "chunk_type"
+            ) == "education":
+                continue
 
-        text = payload.get(
-            "text",
-            "",
-        )
+            candidate_id = payload.get(
+                "candidate_id"
+            )
 
-        if candidate_id is None:
-            continue
+            chunk_id = payload.get(
+                "chunk_id"
+            )
 
-        if not text:
-            continue
+            text = payload.get(
+                "text",
+                "",
+            )
 
-        retrieval_score = float(point.score)
+            if (
+                candidate_id is None
+                or not text
+            ):
+                continue
 
-        # This is only an initial retrieval-quality gate.
-        # It is intentionally not treated as a qualification score.
-        if retrieval_score < retrieval_score_threshold:
-            continue
+            retrieval_score = float(
+                point.score
+            )
 
-        # Do not perform requirement validation here.
-        #
-        # In particular:
-        # - an undated Project chunk may still be valid semantic
-        #   evidence for the activity itself;
-        # - an Experience date must not automatically become the
-        #   date of a separate project/activity;
-        # - recency must be proven using evidence that legitimately
-        #   belongs to the requirement being evaluated.
-        #
-        # The downstream validation layer receives the requirement,
-        # evidence, and any dates attached to that evidence and
-        # decides whether the requirement is MATCH, PARTIAL_MATCH,
-        # or NO_MATCH.
+            if (
+                retrieval_score_threshold
+                is not None
+                and retrieval_score
+                < retrieval_score_threshold
+            ):
+                continue
 
-        evidence_key = (
-            candidate_id,
-            chunk_id,
-            text,
-        )
+            evidence_key = (
+                candidate_id,
+                chunk_id,
+                text,
+            )
 
-        if evidence_key in seen:
-            continue
+            existing = merged.get(
+                evidence_key
+            )
 
-        seen.add(evidence_key)
+            if existing is not None:
 
-        results.append(
-            {
+                existing[
+                    "retrieval_score"
+                ] = max(
+                    float(
+                        existing.get(
+                            "retrieval_score",
+                            0.0,
+                        )
+                    ),
+                    retrieval_score,
+                )
+
+                if (
+                    query_variant
+                    not in existing[
+                        "retrieval_queries"
+                    ]
+                ):
+                    existing[
+                        "retrieval_queries"
+                    ].append(
+                        query_variant
+                    )
+
+                continue
+
+            merged[
+                evidence_key
+            ] = {
                 "candidate_id": candidate_id,
                 "chunk_id": chunk_id,
-                "chunk_type": chunk_type,
+                "chunk_type": payload.get(
+                    "chunk_type"
+                ),
                 "section": payload.get(
                     "section"
                 ),
                 "text": text,
-
                 "company": payload.get(
                     "company"
                 ),
@@ -547,17 +692,34 @@ def retrieve_semantic_candidates(
                 "project_title": payload.get(
                     "project_title"
                 ),
-
-                # Requirement context is metadata only.
-                # It is not a match decision.
                 "requirements": semantic_requirements,
-
-                # RRF retrieval score.
-                # This is an internal retrieval
-                # signal, not a match percentage.
                 "retrieval_score": retrieval_score,
+                "retrieval_queries": [
+                    query_variant
+                ],
             }
-        )
+
+    results = list(
+        merged.values()
+    )
+
+    results.sort(
+        key=lambda item: (
+            float(
+                item.get(
+                    "retrieval_score",
+                    0.0,
+                )
+            ),
+            len(
+                item.get(
+                    "retrieval_queries",
+                    [],
+                )
+            ),
+        ),
+        reverse=True,
+    )
 
     return results
 
@@ -588,7 +750,9 @@ def consolidate_candidate_evidence(
 
     candidates = []
 
-    for candidate_id, chunks in grouped.items():
+    for candidate_id, chunks in (
+        grouped.items()
+    ):
 
         chunks.sort(
             key=lambda item: item.get(
@@ -625,7 +789,9 @@ def consolidate_candidate_evidence(
                 normalized_text
             )
 
-            selected.append(chunk)
+            selected.append(
+                chunk
+            )
 
             if (
                 len(selected)

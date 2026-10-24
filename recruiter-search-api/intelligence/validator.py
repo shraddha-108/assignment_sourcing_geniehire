@@ -1,20 +1,9 @@
 import os
-
 import re
-
 from datetime import date, timedelta
-
 from typing import Literal
-
-
-
 from pydantic import BaseModel, Field
-
 from sentence_transformers import CrossEncoder
-
-
-
-
 
 RERANKER_MODEL_NAME = os.getenv(
 
@@ -24,7 +13,9 @@ RERANKER_MODEL_NAME = os.getenv(
 
 )
 
-
+RERANKER_BATCH_SIZE = int(
+    os.getenv("RERANKER_BATCH_SIZE", "32")
+)
 
 SEMANTIC_VALIDATION_MIN_SCORE = float(
 
@@ -38,8 +29,6 @@ SEMANTIC_VALIDATION_MIN_SCORE = float(
 
 )
 
-
-
 ACTIVITY_OBJECT_MIN_SCORE = float(
 
     os.getenv(
@@ -52,8 +41,6 @@ ACTIVITY_OBJECT_MIN_SCORE = float(
 
 )
 
-
-
 ACTIVITY_ACTION_MIN_SCORE = float(
 
     os.getenv(
@@ -65,8 +52,6 @@ ACTIVITY_ACTION_MIN_SCORE = float(
     )
 
 )
-
-
 
 # The most important activity gate:
 
@@ -88,8 +73,6 @@ ACTIVITY_JOINT_MIN_SCORE = float(
 
 )
 
-
-
 ACTIVITY_ACTION_MARGIN = float(
 
     os.getenv(
@@ -101,8 +84,6 @@ ACTIVITY_ACTION_MARGIN = float(
     )
 
 )
-
-
 
 _ACTION_FAMILIES = {
 
@@ -226,10 +207,6 @@ _ACTION_FAMILIES = {
 
 }
 
-
-
-
-
 class RequirementValidation(BaseModel):
 
     requirement_id: str = ""
@@ -256,10 +233,6 @@ class RequirementValidation(BaseModel):
 
     evidence_score: float | None = None
 
-
-
-
-
 class CandidateSemanticValidation(BaseModel):
 
     matched: bool
@@ -276,15 +249,7 @@ class CandidateSemanticValidation(BaseModel):
 
     )
 
-
-
-
-
 _reranker = CrossEncoder(RERANKER_MODEL_NAME)
-
-
-
-
 
 def _requirement_id(
 
@@ -305,10 +270,6 @@ def _requirement_id(
         )
 
     )
-
-
-
-
 
 def _requirement_query(
 
@@ -334,10 +295,6 @@ def _requirement_query(
 
     ).strip()
 
-
-
-
-
 def _normalize_text(
 
     value: str,
@@ -354,23 +311,15 @@ def _normalize_text(
 
     ).strip()
 
-
-
-
-
 def _parse_date(value):
 
     if value is None:
 
         return None
 
-
-
     if isinstance(value, date):
 
         return value
-
-
 
     if isinstance(value, str):
 
@@ -386,13 +335,7 @@ def _parse_date(value):
 
             return None
 
-
-
     return None
-
-
-
-
 
 def _is_recent_evidence(
 
@@ -408,8 +351,6 @@ def _is_recent_evidence(
 
     )
 
-
-
     start_date = _parse_date(
 
         evidence.get("start_date")
@@ -422,13 +363,9 @@ def _is_recent_evidence(
 
     )
 
-
-
     if end_date is not None:
 
         return end_date >= cutoff
-
-
 
     if start_date is not None:
 
@@ -440,13 +377,7 @@ def _is_recent_evidence(
 
         )
 
-
-
     return False
-
-
-
-
 
 def _score_to_confidence(
 
@@ -457,8 +388,6 @@ def _score_to_confidence(
     """
 
     Diagnostic confidence-like value.
-
-
 
     This is NOT a probability.
 
@@ -477,8 +406,6 @@ def _score_to_confidence(
         / 8.0
 
     )
-
-
 
     return round(
 
@@ -500,10 +427,6 @@ def _score_to_confidence(
 
     )
 
-
-
-
-
 def _matches_requirement_scope(
 
     requirement: dict,
@@ -518,21 +441,15 @@ def _matches_requirement_scope(
 
     ).upper()
 
-
-
     if not scope:
 
         return True
-
-
 
     source = str(
 
         evidence.get("source") or ""
 
     ).lower()
-
-
 
     if scope == "PROJECT":
 
@@ -545,8 +462,6 @@ def _matches_requirement_scope(
             or evidence.get("chunk_type") in {"project", "projects"}
 
         )
-
-
 
     if scope == "EXPERIENCE":
 
@@ -562,13 +477,7 @@ def _matches_requirement_scope(
 
         )
 
-
-
     return True
-
-
-
-
 
 def _detect_action_family(
 
@@ -590,8 +499,6 @@ def _detect_action_family(
 
     )
 
-
-
     for family, phrases in _ACTION_FAMILIES.items():
 
         for phrase in phrases:
@@ -606,13 +513,7 @@ def _detect_action_family(
 
                 return family
 
-
-
     return None
-
-
-
-
 
 def _extract_activity_object(
 
@@ -633,8 +534,6 @@ def _extract_activity_object(
         )
 
     )
-
-
 
     patterns = [
 
@@ -700,11 +599,7 @@ def _extract_activity_object(
 
     ]
 
-
-
     result = text
-
-
 
     for pattern in patterns:
 
@@ -726,13 +621,7 @@ def _extract_activity_object(
 
             break
 
-
-
     return result.strip()
-
-
-
-
 
 def _action_positive_query(
 
@@ -754,8 +643,6 @@ def _action_positive_query(
 
         )
 
-
-
     if action_family == "INTEGRATE":
 
         return (
@@ -765,8 +652,6 @@ def _action_positive_query(
             f"{object_query}."
 
         )
-
-
 
     if action_family == "TEST":
 
@@ -778,8 +663,6 @@ def _action_positive_query(
 
         )
 
-
-
     if action_family == "USE":
 
         return (
@@ -789,8 +672,6 @@ def _action_positive_query(
             f"{object_query}."
 
         )
-
-
 
     if action_family == "SUPPORT":
 
@@ -802,8 +683,6 @@ def _action_positive_query(
 
         )
 
-
-
     return (
 
         "A candidate has direct professional experience with "
@@ -811,10 +690,6 @@ def _action_positive_query(
         f"{object_query}."
 
     )
-
-
-
-
 
 def _action_negative_queries(
 
@@ -827,8 +702,6 @@ def _action_negative_queries(
     if action_family != "BUILD":
 
         return []
-
-
 
     return [
 
@@ -858,10 +731,6 @@ def _action_negative_queries(
 
     ]
 
-
-
-
-
 def _split_evidence_units(
 
     text: str,
@@ -871,8 +740,6 @@ def _split_evidence_units(
     """
 
     Split a retrieved chunk into small evidence units.
-
-
 
     The previous validator scored the whole chunk. That allowed unrelated
 
@@ -884,21 +751,15 @@ def _split_evidence_units(
 
         "built payment systems"
 
-
-
     We now validate action + object against the same sentence/bullet.
 
     """
 
     normalized = str(text or "").strip()
 
-
-
     if not normalized:
 
         return []
-
-
 
     # Resume/project text is commonly bullet/newline based.
 
@@ -910,11 +771,7 @@ def _split_evidence_units(
 
     )
 
-
-
     units = []
-
-
 
     for part in raw_parts:
 
@@ -928,13 +785,9 @@ def _split_evidence_units(
 
         ).strip(" \t\r\n-•▪●◦")
 
-
-
         if not part:
 
             continue
-
-
 
         # Further split long prose into sentence-sized units.
 
@@ -945,8 +798,6 @@ def _split_evidence_units(
             part,
 
         )
-
-
 
         for sentence in sentences:
 
@@ -960,21 +811,15 @@ def _split_evidence_units(
 
             ).strip()
 
-
-
             if sentence:
 
                 units.append(sentence)
-
-
 
     # De-duplicate while preserving order.
 
     seen = set()
 
     unique_units = []
-
-
 
     for unit in units:
 
@@ -984,21 +829,13 @@ def _split_evidence_units(
 
             continue
 
-
-
         seen.add(key)
 
         unique_units.append(unit)
 
-
-
     # If splitting produced nothing, retain the original chunk.
 
     return unique_units or [normalized]
-
-
-
-
 
 def _expand_evidence_units(
 
@@ -1016,15 +853,11 @@ def _expand_evidence_units(
 
     expanded = []
 
-
-
     for item in evidence:
 
         if not isinstance(item, dict):
 
             continue
-
-
 
         text = str(
 
@@ -1032,17 +865,11 @@ def _expand_evidence_units(
 
         ).strip()
 
-
-
         if not text:
 
             continue
 
-
-
         units = _split_evidence_units(text)
-
-
 
         for unit_index, unit in enumerate(units):
 
@@ -1056,280 +883,397 @@ def _expand_evidence_units(
 
             expanded.append(unit_item)
 
-
-
     return expanded
 
+def _predict_scores(pairs: list[tuple[str, str]]):
+    """Run CrossEncoder inference in one batched call."""
+    if not pairs:
+        return []
 
-
-
+    return _reranker.predict(
+        pairs,
+        batch_size=RERANKER_BATCH_SIZE,
+        show_progress_bar=False,
+    )
 
 def _best_cross_encoder_score(
-
     query: str,
-
     evidence: list[dict],
-
 ) -> tuple[float | None, int | None]:
-
-    if not evidence:
-
+    if not evidence or not query:
         return None, None
 
-
-
     pairs = [
-
         (
-
             query,
-
-            str(
-
-                item.get(
-
-                    "text",
-
-                    "",
-
-                )
-
-            ).strip(),
-
+            str(item.get("text", "")).strip(),
         )
-
         for item in evidence
-
+        if str(item.get("text", "")).strip()
     ]
 
+    if not pairs:
+        return None, None
 
-
-    scores = _reranker.predict(pairs)
-
-
+    scores = _predict_scores(pairs)
 
     best_index = max(
-
         range(len(scores)),
-
-        key=lambda item_index: float(
-
-            scores[item_index]
-
-        ),
-
+        key=lambda item_index: float(scores[item_index]),
     )
-
-
 
     return (
-
         float(scores[best_index]),
-
         best_index,
-
     )
 
+def _best_scores_for_queries(
+    queries: list[str],
+    evidence: list[dict],
+) -> dict[str, float | None]:
+    """Score multiple queries against the same evidence in one model call."""
+    if not evidence:
+        return {query: None for query in queries if query}
 
+    clean_queries = []
+    seen_queries = set()
+    for query in queries:
+        query = str(query or "").strip()
+        if not query or query in seen_queries:
+            continue
+        seen_queries.add(query)
+        clean_queries.append(query)
 
+    texts = [
+        str(item.get("text", "")).strip()
+        for item in evidence
+        if str(item.get("text", "")).strip()
+    ]
 
+    if not clean_queries or not texts:
+        return {query: None for query in clean_queries}
 
+    pairs = [
+        (query, text)
+        for query in clean_queries
+        for text in texts
+    ]
+
+    scores = _predict_scores(pairs)
+
+    result = {}
+    width = len(texts)
+
+    for query_index, query in enumerate(clean_queries):
+        start = query_index * width
+        end = start + width
+        query_scores = scores[start:end]
+        result[query] = max(
+            (float(score) for score in query_scores),
+            default=None,
+        )
+
+    return result
 
 def _action_terms(action_family: str) -> tuple[str, ...]:
+
     """Return action phrases for the requested activity family."""
+
     return _ACTION_FAMILIES.get(action_family, ())
 
-
 def _find_action_matches(
+
     text: str,
+
     action_family: str,
+
 ) -> list[re.Match]:
+
     """Find action verbs/phrases in evidence text."""
+
     normalized = _normalize_text(text)
+
     matches: list[re.Match] = []
 
     phrases = sorted(
+
         _action_terms(action_family),
+
         key=len,
+
         reverse=True,
+
     )
 
     for phrase in phrases:
+
         matches.extend(
+
             re.finditer(
+
                 rf"\b{re.escape(phrase)}\b",
+
                 normalized,
+
             )
+
         )
 
     matches.sort(
+
         key=lambda match: (
+
             match.start(),
+
             -(match.end() - match.start()),
+
         )
+
     )
+
     return matches
 
-
 def _clean_action_object_phrase(value: str) -> str:
+
     """Normalize an extracted action-object phrase."""
+
     value = re.sub(r"\s+", " ", value or "").strip(" ,;:-")
+
     value = re.sub(
+
         r"^(?:an?|the)\s+",
+
         "",
+
         value,
+
         flags=re.IGNORECASE,
+
     )
+
     return value.strip(" ,;:-")
 
-
 def _extract_action_object_phrases(
+
     evidence_text: str,
+
     action_family: str,
+
 ) -> list[dict]:
+
     """
+
     Deterministically extract the object immediately governed by an action.
 
     Example:
+
         "Architected a CME platform for global banking"
+
         -> action: "architected"
+
         -> object: "CME platform"
 
     This prevents "Airtel Payment Bank" from being treated as the object
+
     of "architected" merely because it occurs later in the same sentence.
+
     """
+
     text = _normalize_text(evidence_text)
+
     if not text:
+
         return []
 
     matches = _find_action_matches(text, action_family)
+
     if not matches:
+
         return []
 
     context_prepositions = (
+
         " for ",
+
         " using ",
+
         " with ",
+
         " through ",
+
         " via ",
+
         " across ",
+
         " within ",
+
         " during ",
+
         " under ",
+
         " by ",
+
         " to support ",
+
         " in order to ",
+
     )
 
     hard_boundaries = re.compile(r"[.;!?]")
+
     results: list[dict] = []
 
     for match in matches:
+
         remainder = text[match.end():].strip()
+
         if not remainder:
+
             continue
 
         boundary_match = hard_boundaries.search(remainder)
+
         if boundary_match:
+
             remainder = remainder[:boundary_match.start()].strip()
 
         padded = f" {remainder} "
+
         cut_positions = []
 
         for preposition in context_prepositions:
+
             position = padded.find(preposition)
+
             if position != -1:
+
                 cut_positions.append(position)
 
         if cut_positions:
+
             remainder = padded[1:min(cut_positions)].strip()
 
         # Stop before a second known action joined by "and".
+
         for other_family, phrases in _ACTION_FAMILIES.items():
+
             if other_family == action_family:
+
                 continue
 
             found_second_action = False
 
             for phrase in sorted(phrases, key=len, reverse=True):
+
                 second_action = re.search(
+
                     rf"\band\s+{re.escape(phrase)}\b",
+
                     remainder,
+
                 )
 
                 if second_action:
+
                     remainder = remainder[
+
                         :second_action.start()
+
                     ].strip()
+
                     found_second_action = True
+
                     break
 
             if found_second_action:
+
                 break
 
         object_phrase = _clean_action_object_phrase(remainder)
 
         if not object_phrase:
+
             continue
 
         # A direct object should remain local to the action.
+
         words = object_phrase.split()
+
         if len(words) > 20:
+
             object_phrase = " ".join(words[:20])
 
         results.append(
+
             {
+
                 "action": match.group(0),
+
                 "object": object_phrase,
+
             }
+
         )
 
     seen: set[tuple[str, str]] = set()
+
     unique: list[dict] = []
 
     for item in results:
+
         key = (
+
             str(item["action"]),
+
             str(item["object"]),
+
         )
 
         if key in seen:
+
             continue
 
         seen.add(key)
+
         unique.append(item)
 
     return unique
-
 
 def _object_semantic_score(
     requested_object: str,
     extracted_objects: list[str],
 ) -> float | None:
-    """Score the requested object against extracted action objects."""
+    """Score requested object against extracted objects in one batch."""
     if not requested_object or not extracted_objects:
         return None
 
     pairs = [
         (
             requested_object,
-            extracted_object,
+            str(extracted_object).strip(),
         )
         for extracted_object in extracted_objects
-        if extracted_object.strip()
+        if str(extracted_object).strip()
     ]
 
     if not pairs:
         return None
 
-    scores = _reranker.predict(pairs)
+    scores = _predict_scores(pairs)
     return max(float(score) for score in scores)
-
 
 def _activity_validation(
     requirement: dict,
     usable_evidence: list[dict],
-) -> tuple[str, float, str]:
+) -> tuple[str, float, str, float | None]:
+    """
+    Validate an ACTIVITY requirement while minimizing CrossEncoder calls.
+
+    All evidence-level queries needed for the activity decision are scored
+    together in one batched inference call. Extracted action-object pairs are
+    scored in one additional batch. This preserves the qualification logic
+    while avoiding repeated CrossEncoder inference for the same candidate.
+    """
     action_family = _detect_action_family(requirement)
     object_query = _extract_activity_object(requirement)
     generic_query = _requirement_query(requirement)
@@ -1345,33 +1289,33 @@ def _activity_validation(
                 "UNCERTAIN",
                 0.0,
                 "No usable evidence was available.",
+                None,
             )
 
         if score >= SEMANTIC_VALIDATION_MIN_SCORE:
             return (
                 "MATCH",
                 _score_to_confidence(score),
-                (
-                    "The strongest eligible evidence is semantically "
-                    "relevant to the requested requirement."
-                ),
+                "The strongest eligible evidence is semantically relevant to the requested requirement.",
+                score,
             )
 
         return (
             "NO_MATCH",
             _score_to_confidence(score),
-            (
-                "The strongest eligible evidence is too weakly related "
-                "to the requested requirement."
-            ),
+            "The strongest eligible evidence is too weakly related to the requested requirement.",
+            score,
         )
 
-    # Global object/action scores remain diagnostics. They do not qualify
-    # an activity by themselves.
-    object_score, _ = _best_cross_encoder_score(
-        object_query,
-        usable_evidence,
-    )
+    expanded_evidence = _expand_evidence_units(usable_evidence)
+
+    if not expanded_evidence:
+        return (
+            "UNCERTAIN",
+            0.0,
+            "No usable sentence-level evidence was available.",
+            None,
+        )
 
     positive_query = _action_positive_query(
         requirement,
@@ -1379,40 +1323,38 @@ def _activity_validation(
         object_query,
     )
 
-    action_score, _ = _best_cross_encoder_score(
-        positive_query,
-        usable_evidence,
+    negative_queries = _action_negative_queries(
+        object_query,
+        action_family,
     )
+
+    evidence_queries = [
+        generic_query,
+        object_query,
+        positive_query,
+        *negative_queries,
+    ]
+
+    evidence_scores = _best_scores_for_queries(
+        evidence_queries,
+        expanded_evidence,
+    )
+
+    generic_score = evidence_scores.get(generic_query)
+    object_score = evidence_scores.get(object_query)
+    action_score = evidence_scores.get(positive_query)
 
     if object_score is None or action_score is None:
         return (
             "UNCERTAIN",
             0.0,
             "No usable evidence was available.",
+            generic_score,
         )
 
-    expanded_evidence = _expand_evidence_units(
-        usable_evidence
-    )
-
-    if not expanded_evidence:
-        return (
-            "UNCERTAIN",
-            0.0,
-            "No usable sentence-level evidence was available.",
-        )
-
-    # -------------------------------------------------------------
-    # PRIMARY QUALIFICATION:
-    #
-    # Find an explicit action -> extract its direct object -> compare
-    # that object with the recruiter-requested object.
-    # -------------------------------------------------------------
     action_object_candidates: list[dict] = []
 
-    for evidence_index, evidence_item in enumerate(
-        expanded_evidence
-    ):
+    for evidence_index, evidence_item in enumerate(expanded_evidence):
         evidence_text = str(
             evidence_item.get("text", "")
         ).strip()
@@ -1438,62 +1380,53 @@ def _activity_validation(
     if not action_object_candidates:
         return (
             "NO_MATCH",
-            _score_to_confidence(
-                min(object_score, action_score),
-            ),
-            (
-                "The evidence contains no explicit action phrase whose "
-                "direct object can be identified for the requested activity."
-            ),
+            _score_to_confidence(min(object_score, action_score)),
+            "The evidence contains no explicit action phrase whose direct object can be identified for the requested activity.",
+            generic_score,
         )
+
+    pair_objects = [
+        str(item["object"]).strip()
+        for item in action_object_candidates
+        if str(item["object"]).strip()
+    ]
+
+    pair_scores = _predict_scores([
+        (object_query, object_text)
+        for object_text in pair_objects
+    ])
 
     best_pair = None
     best_pair_score = None
+    score_index = 0
 
     for item in action_object_candidates:
-        pair_score = _object_semantic_score(
-            object_query,
-            [str(item["object"])],
-        )
-
-        if pair_score is None:
+        object_text = str(item["object"]).strip()
+        if not object_text:
             continue
 
-        if (
-            best_pair_score is None
-            or pair_score > best_pair_score
-        ):
+        pair_score = float(pair_scores[score_index])
+        score_index += 1
+
+        if best_pair_score is None or pair_score > best_pair_score:
             best_pair_score = pair_score
             best_pair = item
 
     if best_pair is None or best_pair_score is None:
         return (
             "NO_MATCH",
-            _score_to_confidence(
-                min(object_score, action_score),
-            ),
-            (
-                "No extracted action-object pair provides sufficient "
-                "semantic support for the requested object."
-            ),
+            _score_to_confidence(min(object_score, action_score)),
+            "No extracted action-object pair provides sufficient semantic support for the requested object.",
+            generic_score,
         )
 
     action_object_ok = (
         best_pair_score >= SEMANTIC_VALIDATION_MIN_SCORE
     )
 
-    # Keep the existing competing-activity protection for BUILD.
     strongest_negative = None
-
-    for negative_query in _action_negative_queries(
-        object_query,
-        action_family,
-    ):
-        negative_score, _ = _best_cross_encoder_score(
-            negative_query,
-            expanded_evidence,
-        )
-
+    for negative_query in negative_queries:
+        negative_score = evidence_scores.get(negative_query)
         if (
             negative_score is not None
             and (
@@ -1529,381 +1462,172 @@ def _activity_validation(
                 f"'{object_text}', which is semantically compatible with "
                 f"the requested object '{object_query}'."
             ),
+            generic_score,
         )
 
     if competing_activity:
         return (
             "NO_MATCH",
             _score_to_confidence(
-                min(
-                    best_pair_score,
-                    object_score,
-                )
+                min(best_pair_score, object_score)
             ),
             (
                 "The requested object is present in activity-related "
                 "evidence, but the strongest competing activity is better "
                 "explained by testing, support, monitoring, or usage."
             ),
+            generic_score,
         )
 
     return (
         "NO_MATCH",
         _score_to_confidence(
-            min(
-                best_pair_score,
-                action_score,
-                object_score,
-            )
+            min(best_pair_score, action_score, object_score)
         ),
         (
             "The candidate performed a recognized activity, but the "
             "direct object of that activity is not sufficiently compatible "
             "with the requested object."
         ),
+        generic_score,
     )
 
 def _validate_requirement(
-
     requirement: dict,
-
     index: int,
-
     evidence: list[dict],
-
 ) -> RequirementValidation:
-
     requirement_id = _requirement_id(
-
         requirement,
-
         index,
-
     )
 
-
-
-    query = _requirement_query(
-
-        requirement
-
-    )
-
-
+    query = _requirement_query(requirement)
 
     if not query:
-
         return RequirementValidation(
-
             requirement_id=requirement_id,
-
             status="UNCERTAIN",
-
             confidence=0.0,
-
-            reason=(
-
-                "The semantic requirement has no usable evidence query."
-
-            ),
-
+            reason="The semantic requirement has no usable evidence query.",
             evidence_score=None,
-
         )
-
-
 
     usable_evidence = []
 
-
-
     for item in evidence:
-
         if not isinstance(item, dict):
-
             continue
 
-
-
-        text = str(
-
-            item.get(
-
-                "text",
-
-                "",
-
-            )
-
-        ).strip()
-
-
+        text = str(item.get("text", "")).strip()
 
         if not text:
-
             continue
 
-
-
-        if not _matches_requirement_scope(
-
-            requirement,
-
-            item,
-
-        ):
-
+        if not _matches_requirement_scope(requirement, item):
             continue
-
-
 
         usable_evidence.append(item)
 
-
-
     if not usable_evidence:
-
         return RequirementValidation(
-
             requirement_id=requirement_id,
-
             status="NO_MATCH",
-
             confidence=0.0,
-
-            reason=(
-
-                "No usable evidence was retrieved for this requirement."
-
-            ),
-
+            reason="No usable evidence was retrieved for this requirement.",
             evidence_score=None,
-
         )
 
-
-
-    recency_months = requirement.get(
-
-        "recency_months"
-
-    )
-
-
+    recency_months = requirement.get("recency_months")
 
     if recency_months is not None:
-
         recent_evidence = [
-
             item
-
             for item in usable_evidence
-
             if _is_recent_evidence(
-
                 item,
-
                 int(recency_months),
-
             )
-
         ]
 
-
-
         if not recent_evidence:
-
             return RequirementValidation(
-
                 requirement_id=requirement_id,
-
                 status="UNCERTAIN",
-
                 confidence=0.0,
-
                 reason=(
-
                     "The retrieved evidence does not contain a date that "
-
                     "can prove the requested recency window."
-
                 ),
-
                 evidence_score=None,
-
             )
-
-
 
         usable_evidence = recent_evidence
 
-
-
     requirement_type = str(
-
         requirement.get("type") or ""
-
     ).upper()
 
-
-
     if requirement_type == "ACTIVITY":
-
         (
-
             status,
-
             confidence,
-
             reason,
-
+            generic_score,
         ) = _activity_validation(
-
             requirement,
-
             usable_evidence,
-
         )
-
-
-
-        generic_score, _ = _best_cross_encoder_score(
-
-            query,
-
-            usable_evidence,
-
-        )
-
-
 
         return RequirementValidation(
-
             requirement_id=requirement_id,
-
             status=status,
-
             confidence=confidence,
-
             reason=reason,
-
             evidence_score=(
-
-                round(
-
-                    generic_score,
-
-                    6,
-
-                )
-
+                round(generic_score, 6)
                 if generic_score is not None
-
                 else None
-
             ),
-
         )
-
-
 
     best_score, _ = _best_cross_encoder_score(
-
         query,
-
         usable_evidence,
-
     )
-
-
 
     if best_score is None:
-
         return RequirementValidation(
-
             requirement_id=requirement_id,
-
             status="UNCERTAIN",
-
             confidence=0.0,
-
             reason="No usable evidence was available.",
-
             evidence_score=None,
-
         )
-
-
 
     if best_score >= SEMANTIC_VALIDATION_MIN_SCORE:
-
         return RequirementValidation(
-
             requirement_id=requirement_id,
-
             status="MATCH",
-
-            confidence=_score_to_confidence(
-
-                best_score
-
-            ),
-
+            confidence=_score_to_confidence(best_score),
             reason=(
-
                 "The strongest eligible evidence is semantically relevant "
-
                 "to the requested requirement above the validation "
-
                 "threshold."
-
             ),
-
-            evidence_score=round(
-
-                best_score,
-
-                6,
-
-            ),
-
+            evidence_score=round(best_score, 6),
         )
 
-
-
     return RequirementValidation(
-
         requirement_id=requirement_id,
-
         status="NO_MATCH",
-
-        confidence=_score_to_confidence(
-
-            best_score
-
-        ),
-
+        confidence=_score_to_confidence(best_score),
         reason=(
-
             "The retrieved evidence is too weakly related to the requested "
-
             "requirement to qualify as a match."
-
         ),
-
-        evidence_score=round(
-
-            best_score,
-
-            6,
-
-        ),
-
+        evidence_score=round(best_score, 6),
     )
-
-
-
-
 
 def validate_semantic_requirements(
 
@@ -1917,13 +1641,9 @@ def validate_semantic_requirements(
 
     Validate semantic recruiter requirements without an LLM.
 
-
-
     Retrieval and CrossEncoder reranking identify potentially relevant
 
     evidence. This stage independently qualifies the evidence.
-
-
 
     For ACTIVITY requirements, qualification requires:
 
@@ -1935,8 +1655,6 @@ def validate_semantic_requirements(
 
       4. no stronger competing activity for BUILD requirements.
 
-
-
     Required requirements must be MATCH.
 
     Optional requirements may remain NO_MATCH or UNCERTAIN.
@@ -1944,8 +1662,6 @@ def validate_semantic_requirements(
     """
 
     semantic_requirements = []
-
-
 
     for requirement in requirements or []:
 
@@ -1959,8 +1675,6 @@ def validate_semantic_requirements(
 
             continue
 
-
-
         if requirement.get("type") not in {
 
             "ACTIVITY",
@@ -1973,15 +1687,11 @@ def validate_semantic_requirements(
 
             continue
 
-
-
         semantic_requirements.append(
 
             requirement
 
         )
-
-
 
     if not semantic_requirements:
 
@@ -1995,13 +1705,9 @@ def validate_semantic_requirements(
 
         }
 
-
-
     validation_results = []
 
     failed_requirements = []
-
-
 
     for index, requirement in enumerate(
 
@@ -2021,15 +1727,11 @@ def validate_semantic_requirements(
 
         )
 
-
-
         validation_results.append(
 
             result.model_dump()
 
         )
-
-
 
         if (
 
@@ -2056,8 +1758,6 @@ def validate_semantic_requirements(
                 )
 
             )
-
-
 
     return {
 

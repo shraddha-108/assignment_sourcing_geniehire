@@ -1,5 +1,6 @@
 import os
 import re
+import time
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,6 +28,28 @@ from intelligence.validator import (
 )
 
 from models import Candidate, Experience
+
+
+def _log_timing(stage: str, started_at: float, **details) -> None:
+    elapsed = time.perf_counter() - started_at
+
+    detail_text = " ".join(
+        f"{key}={value}"
+        for key, value in details.items()
+    )
+
+    if detail_text:
+        print(
+            f"[SEARCH TIMING] {stage}: "
+            f"{elapsed:.3f}s {detail_text}",
+            flush=True,
+        )
+    else:
+        print(
+            f"[SEARCH TIMING] {stage}: "
+            f"{elapsed:.3f}s",
+            flush=True,
+        )
 
 
 RERANKER_MIN_SCORE = float(
@@ -447,9 +470,18 @@ def _build_semantic_results(
     # It is NOT a qualification percentage.
     # ---------------------------------------------------------
 
+    stage_started_at = time.perf_counter()
+
     reranked_evidence = rerank_evidence(
         query=query,
         evidence=evidence,
+    )
+
+    _log_timing(
+        "semantic.rerank_evidence",
+        stage_started_at,
+        evidence_in=len(evidence),
+        evidence_out=len(reranked_evidence),
     )
 
     if not reranked_evidence:
@@ -480,11 +512,20 @@ def _build_semantic_results(
     # Group the strongest evidence by candidate.
     # ---------------------------------------------------------
 
+    stage_started_at = time.perf_counter()
+
     consolidated_candidates = (
         consolidate_candidate_evidence(
             evidence=reranked_evidence,
             max_chunks_per_candidate=3,
         )
+    )
+
+    _log_timing(
+        "semantic.consolidate_evidence",
+        stage_started_at,
+        evidence_in=len(reranked_evidence),
+        candidates=len(consolidated_candidates),
     )
 
     if not consolidated_candidates:
@@ -526,6 +567,8 @@ def _build_semantic_results(
     }
 
     results = []
+
+    validation_started_at = time.perf_counter()
 
     for item in consolidated_candidates:
 
@@ -770,6 +813,13 @@ def _build_semantic_results(
 
         results.append(result)
 
+    _log_timing(
+        "semantic.validate_candidates",
+        validation_started_at,
+        candidates_in=len(consolidated_candidates),
+        candidates_out=len(results),
+    )
+
     # ---------------------------------------------------------
     # STEP 6
     # Ranking remains based on the CrossEncoder relevance
@@ -931,17 +981,43 @@ def execute_unified_search(
     Unified natural-language retrieval.
 
     Structured and semantic retrieval are independent discovery channels.
-    Neither channel is allowed to become a hard wall for the other.
 
-    Acceptance is requirement-driven:
-      1. retrieve broadly
-      2. validate the actual evidence
-      3. rank only validated candidates
-      4. apply requested_count as a maximum
+    The channels are UNIONED before final acceptance:
+        1. structured retrieval discovers candidates matching structured
+           constraints
+        2. semantic retrieval discovers candidates matching semantic
+           requirements
+        3. structured-only candidates are also given semantic evidence
+           retrieval so they can satisfy the semantic side of a hybrid
+           query
+        4. actual evidence is validated against every required condition
+        5. only validated candidates are ranked
+        6. requested_count is applied as a maximum
+
+    A candidate does not have to be discovered by both retrieval channels
+    to be eligible.
     """
+
+    search_started_at = time.perf_counter()
+
+    stage_started_at = time.perf_counter()
+
     structured_candidates = retrieve_structured_candidates(
         db,
         structured_requirements,
+    )
+
+    _log_timing(
+        "unified.structured_retrieval",
+        stage_started_at,
+        rows=len(structured_candidates),
+        candidates=len(
+            {
+                item["candidate"].id
+                for item in structured_candidates
+                if item.get("candidate") is not None
+            }
+        ),
     )
 
     structured_map = {}
@@ -956,6 +1032,10 @@ def execute_unified_search(
             [],
         ).append(item)
 
+    structured_candidate_ids = list(
+        structured_map.keys()
+    )
+
     semantic_requirements = [
         requirement
         for requirement in (requirements or [])
@@ -968,55 +1048,11 @@ def execute_unified_search(
         }
     ]
 
-    semantic_results = []
-
-    # Semantic retrieval is independent. It is never restricted to the
-    # structured candidate IDs here.
-    if semantic_requirements:
-        semantic_text = (
-            semantic_query
-            or query
-        )
-
-        retrieval_limit = max(
-            requested_count * 20,
-            200,
-        )
-
-        recency_months = None
-
-        for requirement in semantic_requirements:
-            if requirement.get(
-                "recency_months"
-            ) is not None:
-                recency_months = requirement.get(
-                    "recency_months"
-                )
-                break
-
-        semantic_evidence = retrieve_semantic_candidates(
-            query=semantic_text,
-            limit=retrieval_limit,
-            recency_months=recency_months,
-            requirements=semantic_requirements,
-        )
-
-        semantic_results = _build_semantic_results(
-            db=db,
-            query=semantic_text,
-            evidence=semantic_evidence,
-            requested_count=max(
-                requested_count,
-                1,
-            ),
-            count_explicit=False,
-            structured_map=None,
-            semantic_requirements=semantic_requirements,
-        )
-
+    # ---------------------------------------------------------
     # Pure structured search remains deterministic and cheap.
+    # ---------------------------------------------------------
     if not semantic_requirements:
-        structured_candidates = (
+        prepared_candidates = (
             _prepare_structured_candidates_for_scoring(
                 structured_candidates,
                 structured_requirements,
@@ -1024,7 +1060,7 @@ def execute_unified_search(
         )
 
         scored_candidates = score_candidates(
-            structured_candidates,
+            prepared_candidates,
             structured_requirements,
         )
 
@@ -1053,14 +1089,166 @@ def execute_unified_search(
             "STRUCTURED",
         )
 
-    # Semantic candidates are already requirement-validated. Now enforce
-    # any independently structured claims (skill / role / experience)
-    # without requiring the candidate to have been discovered by the
-    # structured search.
-    candidate_ids = [
-        result["id"]
+    semantic_text = (
+        semantic_query
+        or query
+    )
+
+    retrieval_limit = max(
+        requested_count * 20,
+        200,
+    )
+
+    recency_months = None
+
+    for requirement in semantic_requirements:
+        if requirement.get(
+            "recency_months"
+        ) is not None:
+            recency_months = requirement.get(
+                "recency_months"
+            )
+            break
+
+    # ---------------------------------------------------------
+    # SEMANTIC DISCOVERY CHANNEL
+    #
+    # This search is intentionally independent from structured
+    # retrieval. It may discover candidates that have no matching
+    # CandidateSkill row.
+    # ---------------------------------------------------------
+    stage_started_at = time.perf_counter()
+
+    semantic_evidence = retrieve_semantic_candidates(
+        query=semantic_text,
+        limit=retrieval_limit,
+        recency_months=recency_months,
+        requirements=semantic_requirements,
+    )
+
+    _log_timing(
+        "unified.global_semantic_retrieval",
+        stage_started_at,
+        evidence=len(semantic_evidence),
+        limit=retrieval_limit,
+    )
+
+    stage_started_at = time.perf_counter()
+
+    semantic_results = _build_semantic_results(
+        db=db,
+        query=semantic_text,
+        evidence=semantic_evidence,
+        requested_count=max(
+            requested_count,
+            1,
+        ),
+        count_explicit=False,
+        structured_map=None,
+        semantic_requirements=semantic_requirements,
+    )
+
+    _log_timing(
+        "unified.global_semantic_build",
+        stage_started_at,
+        results=len(semantic_results),
+    )
+
+    semantic_result_map = {
+        result["id"]: result
         for result in semantic_results
+    }
+
+    # ---------------------------------------------------------
+    # STRUCTURED CANDIDATES THAT WERE NOT DISCOVERED BY THE
+    # GLOBAL SEMANTIC SEARCH MUST STILL GET A CHANCE.
+    #
+    # This is the important UNION behavior for hybrid search:
+    # a valid structured candidate must not disappear merely
+    # because it was outside the global semantic top-K.
+    # ---------------------------------------------------------
+    missing_structured_ids = [
+        candidate_id
+        for candidate_id in structured_candidate_ids
+        if candidate_id not in semantic_result_map
     ]
+
+    if missing_structured_ids:
+        stage_started_at = time.perf_counter()
+
+        targeted_semantic_evidence = (
+            retrieve_semantic_candidates(
+                query=semantic_text,
+                limit=max(
+                    requested_count * 20,
+                    200,
+                ),
+                candidate_ids=missing_structured_ids,
+                recency_months=recency_months,
+                requirements=semantic_requirements,
+            )
+        )
+
+        _log_timing(
+            "unified.targeted_semantic_retrieval",
+            stage_started_at,
+            candidate_ids=len(missing_structured_ids),
+            evidence=len(targeted_semantic_evidence),
+        )
+
+        stage_started_at = time.perf_counter()
+
+        targeted_semantic_results = _build_semantic_results(
+            db=db,
+            query=semantic_text,
+            evidence=targeted_semantic_evidence,
+            requested_count=max(
+                requested_count,
+                1,
+            ),
+            count_explicit=False,
+            structured_map=None,
+            semantic_requirements=semantic_requirements,
+        )
+
+        _log_timing(
+            "unified.targeted_semantic_build",
+            stage_started_at,
+            results=len(targeted_semantic_results),
+        )
+
+        for result in targeted_semantic_results:
+            candidate_id = result["id"]
+
+            if candidate_id not in semantic_result_map:
+                semantic_result_map[candidate_id] = result
+
+    # ---------------------------------------------------------
+    # UNION
+    #
+    # Every semantically validated candidate is eligible for the
+    # final structured-constraint check, regardless of which
+    # retrieval channel discovered it.
+    # ---------------------------------------------------------
+    candidate_ids = list(
+        semantic_result_map.keys()
+    )
+
+    if not candidate_ids:
+        return (
+            [],
+            (
+                "HYBRID"
+                if (
+                    structured_requirements.get("skills")
+                    or structured_requirements.get("role") is not None
+                    or structured_requirements.get(
+                        "experience_min_years"
+                    ) is not None
+                )
+                else "SEMANTIC"
+            ),
+        )
 
     candidates = db.scalars(
         select(Candidate).where(
@@ -1075,9 +1263,9 @@ def execute_unified_search(
 
     final_results = []
 
-    for result in semantic_results:
-        candidate_id = result["id"]
+    stage_started_at = time.perf_counter()
 
+    for candidate_id, result in semantic_result_map.items():
         candidate = candidate_map.get(
             candidate_id
         )
@@ -1096,16 +1284,31 @@ def execute_unified_search(
 
         final_results.append(result)
 
+    _log_timing(
+        "unified.final_structured_validation",
+        stage_started_at,
+        candidates_in=len(semantic_result_map),
+        candidates_out=len(final_results),
+    )
+
+    _log_timing(
+        "unified.total",
+        search_started_at,
+        final_results=len(final_results),
+    )
+
     # If the query contains both structured and semantic requirements,
     # report HYBRID. If it only contains semantic requirements, report
     # SEMANTIC.
     route = (
         "HYBRID"
-        if structured_requirements.get("skills")
-        or structured_requirements.get("role") is not None
-        or structured_requirements.get(
-            "experience_min_years"
-        ) is not None
+        if (
+            structured_requirements.get("skills")
+            or structured_requirements.get("role") is not None
+            or structured_requirements.get(
+                "experience_min_years"
+            ) is not None
+        )
         else "SEMANTIC"
     )
 
@@ -1118,6 +1321,9 @@ def execute_unified_search(
         reverse=True,
     )
 
+    # The requested count is a maximum, not a guarantee.
+    # Never fill the remaining slots with candidates that failed
+    # requirement validation.
     if count_explicit:
         final_results = final_results[
             :requested_count
@@ -1127,3 +1333,4 @@ def execute_unified_search(
         final_results,
         route,
     )
+
