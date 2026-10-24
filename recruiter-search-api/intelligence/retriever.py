@@ -1,16 +1,25 @@
 from datetime import date, timedelta
+import os
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from qdrant_client import models
 
-from models import Candidate, CandidateSkill
+from models import Candidate, CandidateSkill, Experience
 from ingestion.vectorDB.embedder import embed_text
 from ingestion.vectorDB.qdrant_client import (
     client,
     COLLECTION_NAME,
     DENSE_VECTOR_NAME,
     SPARSE_VECTOR_NAME,
+)
+
+
+SEMANTIC_RETRIEVAL_MIN_SCORE = float(
+    os.getenv(
+        "SEMANTIC_RETRIEVAL_MIN_SCORE",
+        "0.10",
+    )
 )
 
 
@@ -74,6 +83,42 @@ def _experience_is_recent(
     return parsed_end_date >= cutoff_date
 
 
+def _role_matches_title(
+    role: str,
+    title: str | None,
+) -> bool:
+    """
+    Strict structured role matching.
+
+    The structured layer only treats a role as satisfied when
+    the meaningful words from the requested role are present
+    in an actual Experience.title. This favors precision over
+    semantic recall so unrelated roles do not pass merely
+    because the candidate has related skills or industry evidence.
+
+    Semantic role equivalence should be handled later by a
+    dedicated semantic evaluator rather than guessed here.
+    """
+
+    if not role or not title:
+        return False
+
+    role_tokens = [
+        token
+        for token in role.lower().split()
+        if token.strip()
+    ]
+
+    title_text = " ".join(
+        title.lower().split()
+    )
+
+    return all(
+        token in title_text
+        for token in role_tokens
+    )
+
+
 def retrieve_structured_candidates(
     db: Session,
     requirements: dict,
@@ -82,6 +127,10 @@ def retrieve_structured_candidates(
     skills = requirements.get(
         "skills",
         [],
+    )
+
+    role = requirements.get(
+        "role"
     )
 
     recency_months = requirements.get(
@@ -118,6 +167,61 @@ def retrieve_structured_candidates(
             == CandidateSkill.candidate_id,
         )
     )
+
+    if role:
+        role_candidates = db.execute(
+            select(
+                Experience.candidate_id
+            )
+            .where(
+                Experience.title.is_not(None)
+            )
+            .distinct()
+        ).scalars().all()
+
+        matching_role_ids = []
+
+        experiences_by_candidate = {}
+
+        if role_candidates:
+            role_experiences = (
+                db.query(Experience)
+                .filter(
+                    Experience.candidate_id.in_(
+                        role_candidates
+                    )
+                )
+                .all()
+            )
+
+            for experience in role_experiences:
+                experiences_by_candidate.setdefault(
+                    experience.candidate_id,
+                    [],
+                ).append(experience)
+
+        for candidate_id, experiences in (
+            experiences_by_candidate.items()
+        ):
+            if any(
+                _role_matches_title(
+                    role,
+                    experience.title,
+                )
+                for experience in experiences
+            ):
+                matching_role_ids.append(
+                    candidate_id
+                )
+
+        if not matching_role_ids:
+            return []
+
+        stmt = stmt.where(
+            Candidate.id.in_(
+                matching_role_ids
+            )
+        )
 
     if skills:
 
@@ -245,6 +349,7 @@ def retrieve_semantic_candidates(
     candidate_ids: list[int] | None = None,
     recency_months: int | None = None,
     requirements: list[dict] | None = None,
+    min_retrieval_score: float | None = None,
 ) -> list[dict]:
 
     dense_query = embed_text(query)
@@ -346,6 +451,12 @@ def retrieve_semantic_candidates(
 
     results = []
 
+    retrieval_score_threshold = (
+        SEMANTIC_RETRIEVAL_MIN_SCORE
+        if min_retrieval_score is None
+        else min_retrieval_score
+    )
+
     seen = set()
 
     for point in response.points:
@@ -376,6 +487,13 @@ def retrieve_semantic_candidates(
             continue
 
         if not text:
+            continue
+
+        retrieval_score = float(point.score)
+
+        # This is only an initial retrieval-quality gate.
+        # It is intentionally not treated as a qualification score.
+        if retrieval_score < retrieval_score_threshold:
             continue
 
         # Do not perform requirement validation here.
@@ -437,9 +555,7 @@ def retrieve_semantic_candidates(
                 # RRF retrieval score.
                 # This is an internal retrieval
                 # signal, not a match percentage.
-                "retrieval_score": float(
-                    point.score
-                ),
+                "retrieval_score": retrieval_score,
             }
         )
 

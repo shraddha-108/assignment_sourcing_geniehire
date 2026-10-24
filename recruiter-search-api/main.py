@@ -17,9 +17,7 @@ from search.service import (
 )
 
 from intelligence.pipeline import (
-    execute_structured_search,
-    execute_semantic_search,
-    execute_hybrid_search,
+    execute_unified_search,
 )
 
 
@@ -116,136 +114,64 @@ def search(
     if not search_result["valid"]:
         return search_result
 
-    route = search_result["route"]
-
     packet = search_result[
         "routing_packet"
     ]
 
-    if route == "STRUCTURED":
+    structured_requirements = packet[
+        "structured_requirements"
+    ]
 
-        results = execute_structured_search(
-            db=db,
-            requirements=(
-                packet[
-                    "structured_requirements"
-                ]
-            ),
-            requested_count=(
-                packet[
-                    "requested_count"
-                ]
-            ),
-            count_explicit=(
-                packet[
-                    "count_explicit"
-                ]
-            ),
-        )
+    semantic_requirement = packet.get(
+        "semantic_requirement"
+    )
 
-        formatted_results = []
+    requirements = packet.get(
+        "requirements",
+        [],
+    )
 
-        for result in results:
+    requested_count = packet[
+        "requested_count"
+    ]
 
-            candidate = result[
-                "candidate"
-            ]
+    count_explicit = packet[
+        "count_explicit"
+    ]
 
-            formatted_results.append(
-                {
-                    "id": candidate.id,
-                    "name": candidate.name,
-                    "email": candidate.email,
-                    "score": result[
-                        "score"
-                    ],
-                    "matched_skills": [
-                        {
-                            "skill": result[
-                                "skill"
-                            ],
-                            "last_used": (
-                                result[
-                                    "last_used_date"
-                                ].isoformat()
-                                if result[
-                                    "last_used_date"
-                                ]
-                                else "unknown"
-                            ),
-                            "total_months": result[
-                                "total_months"
-                            ],
-                        }
-                    ],
-                }
+    # The classifier still understands the query and
+    # explains the intended route, but the route is no
+    # longer used as a hard retrieval wall.
+    #
+    # Structured and semantic retrieval can independently
+    # discover candidates. The pipeline then validates
+    # the actual requirements before returning candidates.
+    results, execution_route = execute_unified_search(
+        db=db,
+        query=packet["original_query"],
+        structured_requirements=structured_requirements,
+        semantic_query=semantic_requirement,
+        requirements=requirements,
+        requested_count=requested_count,
+        count_explicit=count_explicit,
+    )
+
+    message = None
+
+    if count_explicit:
+
+        found_count = len(results)
+
+        if found_count < requested_count:
+
+            message = (
+                f"Found {found_count} matching candidates. "
+                f"You requested {requested_count}."
             )
 
-        return {
-            "route": route,
-            "parsed": packet,
-            "results": formatted_results,
-        }
-
-    if route == "SEMANTIC":
-
-        results = execute_semantic_search(
-            db=db,
-            query=packet[
-                "semantic_requirement"
-            ],
-            requirements=packet[
-                "requirements"
-            ],
-            requested_count=packet[
-                "requested_count"
-            ],
-            count_explicit=packet[
-                "count_explicit"
-            ],
-        )
-
-        return {
-            "route": route,
-            "parsed": packet,
-            "results": results,
-        }
-
-    if route == "HYBRID":
-
-        results = execute_hybrid_search(
-            db=db,
-            requirements=(
-                packet[
-                    "structured_requirements"
-                ]
-            ),
-            semantic_query=packet[
-                "semantic_requirement"
-            ],
-            semantic_requirements=packet[
-                "requirements"
-            ],
-            requested_count=(
-                packet[
-                    "requested_count"
-                ]
-            ),
-            count_explicit=(
-                packet[
-                    "count_explicit"
-                ]
-            ),
-        )
-
-        return {
-            "route": route,
-            "parsed": packet,
-            "results": results,
-        }
-
     return {
-        "route": route,
+        "route": execution_route,
         "parsed": packet,
-        "results": [],
+        "results": results,
+        "message": message,
     }
