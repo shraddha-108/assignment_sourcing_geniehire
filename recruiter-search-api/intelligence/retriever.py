@@ -14,14 +14,12 @@ from ingestion.vectorDB.qdrant_client import (
     SPARSE_VECTOR_NAME,
 )
 
-
 SEMANTIC_RETRIEVAL_LIMIT = int(
     os.getenv(
         "SEMANTIC_RETRIEVAL_LIMIT",
         "200",
     )
 )
-
 
 def _parse_date(value):
     if value is None:
@@ -40,7 +38,6 @@ def _parse_date(value):
 
     return None
 
-
 def _cutoff_date(
     recency_months: int,
 ) -> date:
@@ -51,7 +48,6 @@ def _cutoff_date(
             days=recency_months * 30
         )
     )
-
 
 def _experience_is_recent(
     start_date,
@@ -82,380 +78,493 @@ def _experience_is_recent(
 
     return parsed_end_date >= cutoff_date
 
-
 def _role_matches_title(
     role: str,
     title: str | None,
 ) -> bool:
     """
-    Strict structured role matching.
+    Match a structured role against an actual experience title.
 
-    The structured layer only treats a role as satisfied when
-    the meaningful words from the requested role are present
-    in an actual Experience.title.
-
-    Semantic role equivalence should be handled later by
-    semantic evaluation rather than guessed here.
+    This is intentionally lexical, not semantic. Semantic equivalence such as
+    "Backend Engineer" vs "Backend Developer" belongs to the semantic layer.
+    Here we only want a reliable structured match without accidental substring
+    matches such as "ai" matching an unrelated word containing those letters.
     """
-
     if not role or not title:
         return False
 
-    role_tokens = [
-        token
-        for token in role.lower().split()
-        if token.strip()
-    ]
+    import re
 
-    title_text = " ".join(
-        title.lower().split()
+    role_tokens = re.findall(r"[a-z0-9]+(?:[+#][a-z0-9]+)?", role.lower())
+    title_tokens = set(
+        re.findall(r"[a-z0-9]+(?:[+#][a-z0-9]+)?", title.lower())
     )
 
-    return all(
-        token in title_text
-        for token in role_tokens
-    )
+    if not role_tokens:
+        return False
+
+    return all(token in title_tokens for token in role_tokens)
 
 
 def retrieve_structured_candidates(
     db: Session,
     requirements: dict,
 ) -> list[dict]:
+    """
+    Retrieve candidates using only the structured requirements supplied by
+    query understanding.
 
-    skills = requirements.get(
-        "skills",
-        [],
-    )
+    Important contract:
+      - A requirement source is only joined/filtered when that source is
+        actually required.
+      - CandidateSkill is never made mandatory for experience-only or role-only
+        searches.
+      - Structured retrieval performs deterministic eligibility filtering for
+        structured fields; semantic equivalence is handled downstream.
+      - The returned shape remains compatible with the existing pipeline:
+        every row contains candidate plus optional skill metadata.
+    """
+    skills = requirements.get("skills") or []
+    role = requirements.get("role")
+    recency_months = requirements.get("recency_months")
+    recency_scope = requirements.get("recency_scope")
+    experience_min_years = requirements.get("experience_min_years")
+    experience_scope = requirements.get("experience_scope")
 
-    role = requirements.get(
-        "role"
-    )
-
-    recency_months = requirements.get(
-        "recency_months"
-    )
-
-    recency_scope = requirements.get(
-        "recency_scope"
-    )
-
-    experience_min_years = requirements.get(
-        "experience_min_years"
-    )
-
-    experience_scope = requirements.get(
-        "experience_scope"
+    normalized_skills = sorted(
+        {
+            str(skill).strip().lower()
+            for skill in skills
+            if str(skill).strip()
+        }
     )
 
     minimum_experience_months = None
-
     if experience_min_years is not None:
-        minimum_experience_months = (
-            experience_min_years * 12
+        try:
+            minimum_experience_months = float(experience_min_years) * 12
+        except (TypeError, ValueError):
+            minimum_experience_months = None
+
+    # ---------------------------------------------------------------
+    # Candidate-level filters
+    # ---------------------------------------------------------------
+    candidate_conditions = []
+
+    if minimum_experience_months is not None and experience_scope != "SKILL":
+        candidate_conditions.append(
+            Candidate.total_experience_months >= minimum_experience_months
         )
 
-    stmt = (
-        select(
-            Candidate,
-            CandidateSkill,
-        )
-        .join(
-            CandidateSkill,
-            Candidate.id
-            == CandidateSkill.candidate_id,
-        )
-    )
-
+    role_candidate_ids = None
     if role:
+        # Role is deliberately lexical in the structured layer. Do not invent
+        # semantic synonyms here; semantic retrieval/validation owns that job.
         role_candidates = db.execute(
-            select(
-                Experience.candidate_id
-            )
-            .where(
-                Experience.title.is_not(None)
-            )
+            select(Experience.candidate_id)
+            .where(Experience.title.is_not(None))
             .distinct()
         ).scalars().all()
 
-        matching_role_ids = []
-
-        experiences_by_candidate = {}
-
-        if role_candidates:
-            role_experiences = (
-                db.query(Experience)
-                .filter(
-                    Experience.candidate_id.in_(
-                        role_candidates
-                    )
-                )
-                .all()
-            )
-
-            for experience in role_experiences:
-                experiences_by_candidate.setdefault(
-                    experience.candidate_id,
-                    [],
-                ).append(experience)
-
-        for candidate_id, experiences in (
-            experiences_by_candidate.items()
-        ):
-            if any(
-                _role_matches_title(
-                    role,
-                    experience.title,
-                )
-                for experience in experiences
-            ):
-                matching_role_ids.append(
-                    candidate_id
-                )
-
-        if not matching_role_ids:
+        if not role_candidates:
             return []
 
-        stmt = stmt.where(
-            Candidate.id.in_(
-                matching_role_ids
-            )
+        experiences = (
+            db.query(Experience)
+            .filter(Experience.candidate_id.in_(role_candidates))
+            .all()
         )
 
-    if skills:
+        role_candidate_ids = {
+            experience.candidate_id
+            for experience in experiences
+            if _role_matches_title(role, experience.title)
+        }
 
-        matching_candidates = (
-            select(
-                CandidateSkill.candidate_id
-            )
-            .where(
-                CandidateSkill.skill.in_(
-                    skills
-                )
-            )
-            .group_by(
-                CandidateSkill.candidate_id
-            )
-            .having(
-                func.count(
-                    func.distinct(
-                        CandidateSkill.skill
-                    )
-                )
-                == len(skills)
-            )
-            .subquery()
+        if not role_candidate_ids:
+            return []
+
+        candidate_conditions.append(Candidate.id.in_(role_candidate_ids))
+
+    # ---------------------------------------------------------------
+    # No skill requirement: do NOT join CandidateSkill.
+    # ---------------------------------------------------------------
+    if not normalized_skills:
+        stmt = select(Candidate)
+        if candidate_conditions:
+            stmt = stmt.where(*candidate_conditions)
+
+        candidates = db.execute(stmt).scalars().all()
+        return [
+            {
+                "candidate": candidate,
+                "skill": None,
+                "last_used_date": None,
+                "total_months": None,
+            }
+            for candidate in candidates
+        ]
+
+    # ---------------------------------------------------------------
+    # Skill requirement: CandidateSkill is now intentionally required.
+    # ---------------------------------------------------------------
+    matching_candidates = (
+        select(CandidateSkill.candidate_id)
+        .where(
+            func.lower(CandidateSkill.skill).in_(normalized_skills)
         )
-
-        stmt = stmt.where(
-            Candidate.id.in_(
-                select(
-                    matching_candidates.c.candidate_id
-                )
-            )
+        .group_by(CandidateSkill.candidate_id)
+        .having(
+            func.count(func.distinct(func.lower(CandidateSkill.skill)))
+            == len(normalized_skills)
         )
+        .subquery()
+    )
 
-        stmt = stmt.where(
-            CandidateSkill.skill.in_(
-                skills
-            )
+    stmt = (
+        select(Candidate, CandidateSkill)
+        .join(
+            CandidateSkill,
+            Candidate.id == CandidateSkill.candidate_id,
         )
+        .where(
+            Candidate.id.in_(select(matching_candidates.c.candidate_id)),
+            func.lower(CandidateSkill.skill).in_(normalized_skills),
+        )
+    )
 
-        if (
-            minimum_experience_months
-            is not None
-        ):
+    if candidate_conditions:
+        stmt = stmt.where(*candidate_conditions)
 
-            if (
-                experience_scope
-                == "SKILL"
-            ):
-
-                stmt = stmt.where(
-                    CandidateSkill.total_months
-                    >= minimum_experience_months
-                )
-
-            else:
-
-                stmt = stmt.where(
-                    Candidate.total_experience_months
-                    >= minimum_experience_months
-                )
-
-    elif (
-        minimum_experience_months
-        is not None
+    # Skill-specific experience belongs to CandidateSkill. Overall experience
+    # was already applied to Candidate above.
+    if (
+        minimum_experience_months is not None
+        and experience_scope == "SKILL"
     ):
-
         stmt = stmt.where(
-            Candidate.total_experience_months
-            >= minimum_experience_months
+            CandidateSkill.total_months >= minimum_experience_months
         )
 
-    # Structured recency applies only when the
-    # recruiter is asking for recent use of the
-    # structured skill.
-    #
-    # Example:
-    # "recent Python developers"
-    #
-    # Semantic recency must never be converted
-    # into recent use of the structured skill.
+    # Structured recency is only a skill recency requirement. Semantic recency
+    # must remain available to the semantic validator instead of becoming an
+    # accidental CandidateSkill filter.
     if (
         recency_months is not None
-        and (
-            recency_scope is None
-            or recency_scope == "SKILL"
-        )
-        and skills
+        and (recency_scope is None or recency_scope == "SKILL")
     ):
+        try:
+            cutoff_date = _cutoff_date(int(recency_months))
+        except (TypeError, ValueError):
+            cutoff_date = None
 
-        cutoff_date = _cutoff_date(
-            recency_months
-        )
-
-        stmt = stmt.where(
-            CandidateSkill.last_used_date
-            >= cutoff_date
-        )
+        if cutoff_date is not None:
+            stmt = stmt.where(
+                CandidateSkill.last_used_date >= cutoff_date
+            )
 
     rows = db.execute(stmt).all()
 
-    results = []
+    return [
+        {
+            "candidate": candidate,
+            "skill": skill.skill,
+            "last_used_date": skill.last_used_date,
+            "total_months": skill.total_months,
+        }
+        for candidate, skill in rows
+    ]
 
-    for candidate, skill in rows:
 
-        results.append(
-            {
-                "candidate": candidate,
-                "skill": skill.skill,
-                "last_used_date": (
-                    skill.last_used_date
-                ),
-                "total_months": (
-                    skill.total_months
-                ),
-            }
+def _semantic_requirement_query(requirement: dict) -> str:
+    """Build a semantic retrieval phrase that preserves requirement target context."""
+    base = str(
+        requirement.get("evidence_query")
+        or requirement.get("value")
+        or ""
+    ).strip()
+    target = str(requirement.get("target") or "").strip()
+
+    if not base:
+        return target
+    if not target:
+        return base
+
+    normalized_base = " ".join(base.lower().split())
+    normalized_target = " ".join(target.lower().split())
+    if normalized_target in normalized_base:
+        return base
+
+    return f"{base} {target}".strip()
+
+def _semantic_query_variants_with_requirements(
+    query: str,
+    requirements: list[dict] | None,
+) -> list[tuple[str, tuple[int, ...], int]]:
+    """
+    Build high-recall semantic retrieval formulations while preserving
+    requirement provenance and query specificity.
+
+    Retrieval is intentionally permissive. It is not allowed to decide
+    whether a candidate satisfies a recruiter requirement; that decision
+    belongs to downstream qualification.
+
+    The important distinction here is between:
+      - discovery queries: broad formulations that maximize recall
+      - relationship queries: formulations that preserve the relationship
+        between requirement components
+      - component queries: individual semantic anchors such as an activity
+        or target, useful when the candidate's resume expresses the same
+        concept with different wording
+
+    No domain-specific vocabulary or query-specific rules are used. The
+    structured requirement produced by query understanding is the source
+    of the retrieval formulations.
+    """
+    variants: list[tuple[str, tuple[int, ...], int]] = []
+
+    def add(
+        value,
+        requirement_ids=(),
+        strength: int = 0,
+    ) -> None:
+        value = str(value or "").strip()
+        if not value:
+            return
+
+        normalized = " ".join(value.lower().split())
+        if not normalized:
+            return
+
+        normalized_ids = tuple(
+            sorted(
+                {
+                    int(requirement_id)
+                    for requirement_id in requirement_ids
+                }
+            )
         )
 
-    return results
+        for index, (
+            existing,
+            existing_ids,
+            existing_strength,
+        ) in enumerate(variants):
+            if " ".join(existing.lower().split()) != normalized:
+                continue
 
+            variants[index] = (
+                existing,
+                tuple(
+                    sorted(
+                        set(existing_ids).union(normalized_ids)
+                    )
+                ),
+                max(existing_strength, strength),
+            )
+            return
+
+        variants.append(
+            (
+                value,
+                normalized_ids,
+                strength,
+            )
+        )
+
+    requirement_list = requirements or []
+
+    # The original recruiter query is useful for broad discovery, but it
+    # must not be treated as evidence for every individual requirement.
+    add(query, strength=0)
+
+    for requirement_index, requirement in enumerate(requirement_list):
+        if not isinstance(requirement, dict):
+            continue
+
+        requirement_ids = (requirement_index,)
+        requirement_type = str(
+            requirement.get("type", "") or ""
+        ).upper()
+
+        value = str(
+            requirement.get("value") or ""
+        ).strip()
+
+        evidence_query = str(
+            requirement.get("evidence_query") or ""
+        ).strip()
+
+        target = str(
+            requirement.get("target") or ""
+        ).strip()
+
+        requirement_query = _semantic_requirement_query(
+            requirement
+        )
+
+        # The strongest retrieval formulation is the complete semantic
+        # relationship represented by the requirement.
+        add(
+            requirement_query,
+            requirement_ids,
+            strength=4,
+        )
+
+        # If query understanding supplied an explicit evidence formulation,
+        # use it as another high-quality semantic formulation.
+        add(
+            evidence_query,
+            requirement_ids,
+            strength=4,
+        )
+
+        if requirement_type == "ACTIVITY":
+            # Activity-only retrieval improves recall when the resume uses
+            # different wording for the target relationship.
+            add(
+                value,
+                requirement_ids,
+                strength=2,
+            )
+
+            # Target-only retrieval is deliberately allowed as a discovery
+            # path. It can surface evidence whose wording differs radically
+            # from the recruiter's wording. The validator must still prove
+            # the activity and relationship before the candidate can match.
+            add(
+                target,
+                requirement_ids,
+                strength=1,
+            )
+
+            if value and target:
+                # Preserve the relationship explicitly in several natural
+                # formulations. These are generated from the structured
+                # requirement rather than from domain-specific synonyms.
+                relationship_forms = (
+                    f"{value} using {target}",
+                    f"{value} with {target}",
+                    f"experience involving {value} and {target}",
+                )
+
+                for formulation in relationship_forms:
+                    add(
+                        formulation,
+                        requirement_ids,
+                        strength=3,
+                    )
+            elif value:
+                add(
+                    f"candidate experience involving {value}",
+                    requirement_ids,
+                    strength=3,
+                )
+                add(
+                    f"professional work involving {value}",
+                    requirement_ids,
+                    strength=3,
+                )
+                add(
+                    f"projects involving {value}",
+                    requirement_ids,
+                    strength=3,
+                )
+
+            if target:
+                add(
+                    f"candidate experience involving {target}",
+                    requirement_ids,
+                    strength=1,
+                )
+                add(
+                    f"professional work involving {target}",
+                    requirement_ids,
+                    strength=1,
+                )
+
+        elif requirement_type == "INDUSTRY":
+            add(
+                value,
+                requirement_ids,
+                strength=2,
+            )
+            add(
+                target,
+                requirement_ids,
+                strength=2,
+            )
+
+            industry_value = (
+                value
+                or evidence_query
+                or target
+            )
+            if industry_value:
+                add(
+                    f"industry experience in {industry_value}",
+                    requirement_ids,
+                    strength=3,
+                )
+                add(
+                    f"professional experience in {industry_value}",
+                    requirement_ids,
+                    strength=3,
+                )
+
+        elif requirement_type == "OTHER":
+            add(
+                value,
+                requirement_ids,
+                strength=2,
+            )
+            add(
+                target,
+                requirement_ids,
+                strength=1,
+            )
+
+            other_value = (
+                evidence_query
+                or value
+                or target
+            )
+            if other_value:
+                add(
+                    f"professional experience related to {other_value}",
+                    requirement_ids,
+                    strength=3,
+                )
+
+        else:
+            # For future semantic requirement types, retain the same generic
+            # high-recall behavior without requiring a new domain-specific
+            # branch.
+            add(
+                value,
+                requirement_ids,
+                strength=2,
+            )
+            add(
+                target,
+                requirement_ids,
+                strength=1,
+            )
+
+    return variants
 
 def _semantic_query_variants(
     query: str,
     requirements: list[dict] | None,
 ) -> list[str]:
-    """
-    Build multiple retrieval formulations to improve recall.
-
-    Retrieval is intentionally broad here. These variants are
-    discovery queries only; they do not qualify a candidate.
-    """
-
-    variants: list[str] = []
-
-    def add(value) -> None:
-        value = str(
-            value or ""
-        ).strip()
-
-        if not value:
-            return
-
-        normalized = " ".join(
-            value.lower().split()
+    """Backward-compatible query-only view of semantic variants."""
+    return [
+        variant
+        for variant, _, _ in _semantic_query_variants_with_requirements(
+            query,
+            requirements,
         )
-
-        if any(
-            " ".join(
-                existing.lower().split()
-            )
-            == normalized
-            for existing in variants
-        ):
-            return
-
-        variants.append(value)
-
-    add(query)
-
-    for requirement in requirements or []:
-        if not isinstance(
-            requirement,
-            dict,
-        ):
-            continue
-
-        value = requirement.get(
-            "value"
-        )
-
-        evidence_query = requirement.get(
-            "evidence_query"
-        )
-
-        add(evidence_query)
-        add(value)
-
-        requirement_type = str(
-            requirement.get(
-                "type",
-                "",
-            )
-            or ""
-        ).upper()
-
-        if requirement_type == "ACTIVITY":
-            if evidence_query:
-                add(
-                    f"candidate experience involving {evidence_query}"
-                )
-
-                add(
-                    f"professional work involving {evidence_query}"
-                )
-
-                add(
-                    f"projects involving {evidence_query}"
-                )
-
-            if value:
-                add(
-                    f"candidate experience with {value}"
-                )
-
-                add(
-                    f"professional work with {value}"
-                )
-
-        elif requirement_type == "INDUSTRY":
-            if evidence_query:
-                add(
-                    f"industry experience in {evidence_query}"
-                )
-
-                add(
-                    f"professional experience in {evidence_query}"
-                )
-
-            if value:
-                add(
-                    f"industry experience in {value}"
-                )
-
-        elif requirement_type == "OTHER":
-            if evidence_query:
-                add(
-                    f"professional experience related to {evidence_query}"
-                )
-
-            if value:
-                add(
-                    f"professional experience related to {value}"
-                )
-
-    return variants
-
+    ]
 
 def _query_semantic_points(
     query: str,
@@ -493,7 +602,6 @@ def _query_semantic_points(
         with_vectors=False,
     )
 
-
 def retrieve_semantic_candidates(
     query: str,
     limit: int = SEMANTIC_RETRIEVAL_LIMIT,
@@ -519,7 +627,7 @@ def retrieve_semantic_candidates(
         requirements or []
     )
 
-    query_variants = _semantic_query_variants(
+    query_variants = _semantic_query_variants_with_requirements(
         query,
         semantic_requirements,
     )
@@ -579,8 +687,11 @@ def retrieve_semantic_candidates(
         dict,
     ] = {}
 
-    for query_variant in query_variants:
-
+    for (
+        query_variant,
+        requirement_ids,
+        query_strength,
+    ) in query_variants:
         response = _query_semantic_points(
             query_variant,
             limit,
@@ -663,6 +774,25 @@ def retrieve_semantic_candidates(
                         query_variant
                     )
 
+                existing[
+                    "retrieval_query_strength"
+                ] = max(
+                    int(
+                        existing.get(
+                            "retrieval_query_strength",
+                            0,
+                        )
+                    ),
+                    query_strength,
+                )
+
+                existing[
+                    "matched_requirement_ids"
+                ] = sorted(
+                    set(existing.get("matched_requirement_ids", []))
+                    .union(requirement_ids)
+                )
+
                 continue
 
             merged[
@@ -693,7 +823,9 @@ def retrieve_semantic_candidates(
                     "project_title"
                 ),
                 "requirements": semantic_requirements,
+                "matched_requirement_ids": list(requirement_ids),
                 "retrieval_score": retrieval_score,
+                "retrieval_query_strength": query_strength,
                 "retrieval_queries": [
                     query_variant
                 ],
@@ -705,6 +837,12 @@ def retrieve_semantic_candidates(
 
     results.sort(
         key=lambda item: (
+            int(
+                item.get(
+                    "retrieval_query_strength",
+                    0,
+                )
+            ),
             float(
                 item.get(
                     "retrieval_score",
@@ -723,114 +861,145 @@ def retrieve_semantic_candidates(
 
     return results
 
-
 def consolidate_candidate_evidence(
     evidence: list[dict],
     max_chunks_per_candidate: int = 3,
 ) -> list[dict]:
-
-    grouped: dict[
-        int,
-        list[dict],
-    ] = {}
+    """Consolidate evidence while preserving requirement coverage."""
+    grouped: dict[int, list[dict]] = {}
 
     for item in evidence:
-
-        candidate_id = item.get(
-            "candidate_id"
-        )
-
+        candidate_id = item.get("candidate_id")
         if candidate_id is None:
             continue
-
-        grouped.setdefault(
-            candidate_id,
-            [],
-        ).append(item)
+        grouped.setdefault(candidate_id, []).append(item)
 
     candidates = []
 
-    for candidate_id, chunks in (
-        grouped.items()
-    ):
-
+    for candidate_id, chunks in grouped.items():
         chunks.sort(
-            key=lambda item: item.get(
-                "reranker_score",
-                item.get(
-                    "retrieval_score",
-                    0,
+            key=lambda item: (
+                float(
+                    item.get(
+                        "reranker_score",
+                        item.get("retrieval_score", 0),
+                    )
+                ),
+                int(
+                    item.get(
+                        "retrieval_query_strength",
+                        0,
+                    )
                 ),
             ),
             reverse=True,
         )
 
-        selected = []
-        seen_text = set()
+        selected: list[dict] = []
+        seen_text: set[str] = set()
+        covered_requirements: set[int] = set()
 
-        for chunk in chunks:
+        def select_chunk(chunk: dict) -> bool:
+            normalized_text = " ".join(chunk.get("text", "").lower().split())
+            if not normalized_text or normalized_text in seen_text:
+                return False
+            selected.append(chunk)
+            seen_text.add(normalized_text)
+            for requirement_id in chunk.get("matched_requirement_ids", []):
+                try:
+                    covered_requirements.add(int(requirement_id))
+                except (TypeError, ValueError):
+                    continue
+            return True
 
-            normalized_text = " ".join(
-                chunk.get(
-                    "text",
-                    "",
+        requirement_ids = sorted(
+            {
+                int(requirement_id)
+                for chunk in chunks
+                for requirement_id in chunk.get("matched_requirement_ids", [])
+                if str(requirement_id).isdigit()
+            }
+        )
+
+        # First guarantee requirement coverage, but respect the evidence budget.
+        # If there are more represented requirements than the budget allows,
+        # prioritize the strongest chunks that cover the largest number of
+        # still-uncovered requirements.
+        remaining_requirement_ids = set(requirement_ids)
+        while remaining_requirement_ids and len(selected) < max_chunks_per_candidate:
+            best_chunk = None
+            best_new_requirements = set()
+            best_key = None
+
+            for chunk in chunks:
+                normalized_text = " ".join(chunk.get("text", "").lower().split())
+                if not normalized_text or normalized_text in seen_text:
+                    continue
+
+                chunk_requirement_ids = {
+                    int(value)
+                    for value in chunk.get("matched_requirement_ids", [])
+                    if str(value).isdigit()
+                }
+                new_requirements = chunk_requirement_ids.intersection(
+                    remaining_requirement_ids
                 )
-                .lower()
-                .split()
-            )
+                if not new_requirements:
+                    continue
 
-            if not normalized_text:
-                continue
+                score = float(
+                    chunk.get(
+                        "reranker_score",
+                        chunk.get("retrieval_score", 0),
+                    )
+                )
+                key = (
+                    len(new_requirements),
+                    score,
+                    int(
+                        chunk.get(
+                            "retrieval_query_strength",
+                            0,
+                        )
+                    ),
+                )
 
-            if normalized_text in seen_text:
-                continue
+                if best_key is None or key > best_key:
+                    best_key = key
+                    best_chunk = chunk
+                    best_new_requirements = new_requirements
 
-            seen_text.add(
-                normalized_text
-            )
-
-            selected.append(
-                chunk
-            )
-
-            if (
-                len(selected)
-                >= max_chunks_per_candidate
-            ):
+            if best_chunk is None:
                 break
+
+            select_chunk(best_chunk)
+            remaining_requirement_ids.difference_update(best_new_requirements)
+
+        # Then fill the remaining evidence budget with the strongest chunks.
+        for chunk in chunks:
+            if len(selected) >= max_chunks_per_candidate:
+                break
+            select_chunk(chunk)
 
         if not selected:
             continue
 
         reranker_scores = [
-            float(
-                item.get(
-                    "reranker_score",
-                    0,
-                )
-            )
+            float(item.get("reranker_score", item.get("retrieval_score", 0)))
             for item in selected
         ]
-
-        best_reranker_score = max(
-            reranker_scores
-        )
 
         candidates.append(
             {
                 "candidate_id": candidate_id,
                 "evidence": selected,
-                "reranker_score": (
-                    best_reranker_score
-                ),
+                "reranker_score": max(reranker_scores),
+                "matched_requirement_ids": sorted(covered_requirements),
             }
         )
 
     candidates.sort(
-        key=lambda candidate: candidate[
-            "reranker_score"
-        ],
+        key=lambda candidate: candidate["reranker_score"],
         reverse=True,
     )
-
     return candidates

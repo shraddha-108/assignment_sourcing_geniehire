@@ -38,12 +38,21 @@ def recency_score(
 
 
 def experience_score(
-    total_months: int,
+    total_months: int | None,
     minimum_years: float | None,
 ) -> float:
 
+    # If the recruiter did not specify an
+    # experience requirement, experience should
+    # not affect the score.
     if minimum_years is None:
         return 100.0
+
+    # If experience is required but the candidate's
+    # experience data is unavailable, the candidate
+    # cannot receive experience credit.
+    if total_months is None:
+        return 0.0
 
     required_months = minimum_years * 12
 
@@ -61,7 +70,7 @@ def experience_score(
 
 def skill_score(
     last_used_date: date | None,
-    total_months: int,
+    total_months: int | None,
     recency_months: int | None,
     minimum_years: float | None,
 ) -> float:
@@ -124,10 +133,10 @@ def score_candidates(
 
         score = skill_score(
             last_used_date=(
-                candidate["last_used_date"]
+                candidate.get("last_used_date")
             ),
             total_months=(
-                candidate["total_months"]
+                candidate.get("total_months")
             ),
             recency_months=(
                 structured_recency_months

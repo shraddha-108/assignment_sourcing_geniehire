@@ -1,102 +1,163 @@
 import os
+
 import re
+
 from typing import Literal
 
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
 
+from langchain_openai import ChatOpenAI
+
+from pydantic import BaseModel, Field
 
 load_dotenv()
 
-
 OPENAI_MODEL = os.getenv(
+
     "OPENAI_MODEL",
+
     "gpt-4o-mini",
+
 )
 
 DEFAULT_COUNT = 10
+
 MAX_COUNT = 100
 
-
 class StructuredRequirements(BaseModel):
+
     skills: list[str] = Field(default_factory=list)
+
     role: str | None = None
 
     recency_months: int | None = None
 
     recency_scope: Literal[
+
         "SKILL",
+
         "SEMANTIC",
+
         "OVERALL",
+
         "UNKNOWN",
+
     ] | None = None
 
     experience_min_years: float | None = None
 
     experience_scope: Literal[
+
         "OVERALL",
+
         "SKILL",
+
+        "DOMAIN",
+
         "UNKNOWN",
+
     ] | None = None
 
-
 class SearchRequirement(BaseModel):
+
     """
+
     A recruiter requirement independent of retrieval strategy.
 
     This describes what must be proven. Retrieval and validation decide where
+
     the evidence comes from and whether the evidence is sufficient.
+
     """
 
     type: Literal[
+
         "SKILL",
+
         "ROLE",
+
         "EXPERIENCE",
+
         "ACTIVITY",
+
         "INDUSTRY",
+
         "OTHER",
+
     ]
 
     value: str
+
+    # For EXPERIENCE scope=DOMAIN, value is the numeric minimum and target
+
+    # stores the semantic domain whose employment duration must be measured.
+
+    target: str | None = None
+
     required: bool = True
 
     operator: Literal[
+
         "EQ",
+
         "GTE",
+
         "LTE",
+
         "CONTAINS",
+
         "NOT",
+
         "PREFERRED",
+
     ] | None = None
 
     scope: Literal[
+
         "OVERALL",
+
         "SKILL",
+
         "ROLE",
+
         "ACTIVITY",
+
         "PROJECT",
+
+        "EXPERIENCE",
+
+        "DOMAIN",
+
         "UNKNOWN",
+
     ] | None = None
 
     recency_months: int | None = None
 
     # Natural-language description of the evidence to retrieve.
+
     evidence_query: str | None = None
 
-
 class SearchIntent(BaseModel):
+
     requested_count: int | None = None
+
     count_explicit: bool = False
 
     # Source-of-truth representation of recruiter requirements.
+
     requirements: list[SearchRequirement] = Field(default_factory=list)
 
     # Legacy fields retained for the current pipeline during migration.
+
     route: Literal[
+
         "STRUCTURED",
+
         "SEMANTIC",
+
         "HYBRID",
+
     ]
 
     structured_requirements: StructuredRequirements
@@ -105,33 +166,46 @@ class SearchIntent(BaseModel):
 
     reason: str
 
-
 def _create_llm() -> ChatOpenAI:
 
     api_key = os.getenv("OPENAI_API_KEY")
 
     if not api_key:
+
         raise RuntimeError(
+
             "OPENAI_API_KEY is not configured."
+
         )
 
     return ChatOpenAI(
+
         model=OPENAI_MODEL,
+
         api_key=api_key,
+
         temperature=0,
+
         max_retries=2,
+
     )
 
-
 def _normalize_skills(
+
     skills: list[str],
+
     known_skills: list[str],
+
 ) -> list[str]:
 
     known_map = {
+
         skill.strip().lower(): skill.strip()
+
         for skill in known_skills
+
         if skill and skill.strip()
+
     }
 
     normalized = []
@@ -139,6 +213,7 @@ def _normalize_skills(
     for skill in skills:
 
         if not skill:
+
             continue
 
         key = skill.strip().lower()
@@ -148,1339 +223,1500 @@ def _normalize_skills(
             canonical = known_map[key]
 
             if canonical not in normalized:
+
                 normalized.append(canonical)
 
     return normalized
 
-
 def _normalize_count(
+
     requested_count: int | None,
+
     count_explicit: bool,
+
 ) -> tuple[int, bool]:
 
     if not count_explicit:
+
         return DEFAULT_COUNT, False
 
     if requested_count is None:
+
         return DEFAULT_COUNT, False
 
     requested_count = max(
+
         1,
+
         min(requested_count, MAX_COUNT),
+
     )
 
     return requested_count, True
 
-
 def _contains_phrase(
+
     text: str,
+
     phrase: str,
+
 ) -> bool:
 
     pattern = rf"(?<!\w){re.escape(phrase)}(?!\w)"
 
     return bool(
+
         re.search(
+
             pattern,
+
             text,
+
             flags=re.IGNORECASE,
+
         )
+
     )
 
-
 def _has_action_language(
+
     text: str,
+
 ) -> bool:
 
     action_patterns = [
+
         r"\bbuilt\b",
+
         r"\bbuild\b",
+
         r"\bdeveloped\b",
+
         r"\bdevelop\b",
+
         r"\bcreated\b",
+
         r"\bcreate\b",
+
         r"\bimplemented\b",
+
         r"\bimplement\b",
+
         r"\bdesigned\b",
+
         r"\bdesign\b",
+
         r"\bdeployed\b",
+
         r"\bdeploy\b",
+
         r"\bintegrated\b",
+
         r"\bintegrate\b",
+
         r"\bengineered\b",
+
         r"\bengineer\b",
+
         r"\btrained\b",
+
         r"\btrain\b",
+
         r"\boptimized\b",
+
         r"\boptimize\b",
+
         r"\bmaintained\b",
+
         r"\bmaintain\b",
+
         r"\bautomated\b",
+
         r"\bautomate\b",
+
         r"\barchitected\b",
+
         r"\barchitect\b",
+
         r"\bdelivered\b",
+
         r"\bdeliver\b",
+
         r"\bmigrated\b",
+
         r"\bmigrate\b",
+
         r"\bscaled\b",
+
         r"\bscale\b",
+
         r"\bled\b",
+
         r"\bmanaged\b",
+
         r"\bmanage\b",
+
         r"\bconfigured\b",
+
         r"\bconfigure\b",
+
         r"\borchestrated\b",
+
         r"\borchestrate\b",
+
         r"\bdebugged\b",
+
         r"\bdebug\b",
+
         r"\bmodernized\b",
+
         r"\bmodernize\b",
+
     ]
 
     return any(
+
         re.search(
+
             pattern,
+
             text,
+
             flags=re.IGNORECASE,
+
         )
+
         for pattern in action_patterns
+
     )
 
-
 def _is_generic_semantic_phrase(
+
     semantic_requirement: str,
+
 ) -> bool:
 
     normalized = (
+
         semantic_requirement
+
         .strip()
+
         .lower()
+
     )
 
     generic_phrases = {
+
         "worked with",
+
         "experience with",
+
         "experienced with",
+
         "used",
+
         "knowledge of",
+
         "familiar with",
+
         "hands-on experience with",
+
         "proficient in",
+
         "experience using",
+
         "skilled in",
+
         "expert in",
+
         "strong knowledge of",
+
         "strong experience with",
+
     }
 
     return normalized in generic_phrases
 
-
 def _is_simple_skill_possession(
+
     semantic_requirement: str,
+
     skills: list[str],
+
 ) -> bool:
 
     semantic_text = (
+
         semantic_requirement
+
         .strip()
+
         .lower()
+
     )
 
     if not semantic_text:
+
         return True
 
     if _has_action_language(
+
         semantic_text
+
     ):
+
         return False
 
     possession_patterns = [
+
         "worked with",
+
         "experience with",
+
         "experienced with",
+
         "used",
+
         "knowledge of",
+
         "familiar with",
+
         "hands-on experience with",
+
         "proficient in",
+
         "experience using",
+
         "skilled in",
+
         "expert in",
+
         "strong knowledge of",
+
         "strong experience with",
+
     ]
 
     for skill in skills:
 
         skill_text = (
+
             skill.strip()
+
             .lower()
+
         )
 
         if not skill_text:
+
             continue
 
         for prefix in possession_patterns:
 
             expected = (
+
                 f"{prefix} {skill_text}"
+
             )
 
             if semantic_text == expected:
+
                 return True
 
     return False
 
-
 def _repair_semantic_requirement(
+
     semantic_requirement: str | None,
+
     skills: list[str],
+
 ) -> str | None:
 
     if not semantic_requirement:
+
         return None
 
     semantic_requirement = (
+
         semantic_requirement
+
         .strip()
+
     )
 
     if not semantic_requirement:
+
         return None
 
-    if _is_generic_semantic_phrase(
+    normalized = " ".join(semantic_requirement.lower().split())
+    has_skill = any(
+        skill.strip().lower() in normalized
+        for skill in skills
+        if skill and skill.strip()
+    )
+
+    # "experience in/with/using X" is not merely a skill-possession
+    # statement. It asks downstream qualification to find evidence that X was
+    # actually used. Preserve that semantic evidence requirement even though
+    # the requirement also has a structured SKILL component.
+    experience_evidence = (
+        has_skill
+        and "experience" in normalized
+        and any(
+            marker in normalized
+            for marker in (
+                "experience in ",
+                "experience with ",
+                "experience using ",
+                "hands-on experience ",
+                "professional experience ",
+            )
+        )
+    )
+
+    if not experience_evidence and _is_generic_semantic_phrase(
+
         semantic_requirement
+
     ):
+
         return None
 
-    if _is_simple_skill_possession(
+    if not experience_evidence and _is_simple_skill_possession(
+
         semantic_requirement,
+
         skills,
+
     ):
+
         return None
 
     return semantic_requirement
 
-
 def _derive_route(
+
     structured_requirements: StructuredRequirements,
+
     semantic_requirement: str | None,
+
     requirements: list[SearchRequirement],
+
 ) -> str:
 
     has_structured = bool(
+
         structured_requirements.skills
+
         or structured_requirements.role
+
         or structured_requirements.recency_months is not None
+
         or structured_requirements.experience_min_years is not None
+
     )
 
     # These requirement types are not safely represented by the current
+
     # structured database filters, so they remain semantic until their
+
     # retrieval/validation logic is implemented.
+
     has_semantic_requirements = any(
+
         requirement.type in {
+
             "ACTIVITY",
+
             "INDUSTRY",
+
             "OTHER",
+
         }
+
         for requirement in requirements
+
     )
 
     has_semantic = bool(
+
         semantic_requirement
+
         and semantic_requirement.strip()
+
     ) or has_semantic_requirements
 
     if has_structured and has_semantic:
+
         return "HYBRID"
 
     if has_structured:
+
         return "STRUCTURED"
 
     if has_semantic:
+
         return "SEMANTIC"
 
     return "SEMANTIC"
 
+def _normalize_activity_scope(
 
-def _normalize_requirements(
+    requirement: SearchRequirement,
+
+) -> None:
+
+    """
+
+    Normalize the evidence source implied by an activity requirement.
+
+    PROJECT and EXPERIENCE are source constraints, not descriptions of the
+
+    action itself. They must therefore be inferred only when the recruiter
+
+    explicitly identifies the source context.
+
+    Examples:
+
+        "built machine learning projects"
+
+            -> PROJECT
+
+        "hands-on experience deploying applications using Docker"
+
+            -> EXPERIENCE
+
+        "built REST APIs"
+
+            -> UNKNOWN
+
+    The last case is important: an activity without an explicit source
+
+    context may legitimately appear in either a project or professional
+
+    experience section.
+
+    """
+
+    if requirement.type != "ACTIVITY":
+
+        return
+
+    text = " ".join(
+
+        str(
+
+            requirement.evidence_query
+
+            or requirement.value
+
+            or ""
+
+        ).lower().split()
+
+    )
+
+    project_pattern = re.compile(
+
+        r"\bproject(?:s|[- ]based)?\b"
+
+    )
+
+    experience_pattern = re.compile(
+
+        r"\b(?:hands[- ]on|professional|work|job|career)\s+experience\b"
+
+        r"|\bexperience\s+(?:in|with|using|deploying|on|for)\b"
+
+        r"|\bexperience\b"
+
+    )
+
+    if project_pattern.search(text):
+
+        requirement.scope = "PROJECT"
+
+        return
+
+    if experience_pattern.search(text):
+
+        requirement.scope = "EXPERIENCE"
+
+        return
+
+    # Do not trust an LLM-generated PROJECT/EXPERIENCE scope when the query
+
+    # itself does not state that source context. UNKNOWN keeps retrieval broad
+
+    # and lets the evidence validator decide whether the actual evidence is
+
+    # sufficient.
+
+    requirement.scope = "UNKNOWN"
+
+_NUMBER_WORDS = {
+
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
+
+    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+
+    "ten": 10, "eleven": 11, "twelve": 12,
+
+}
+
+def _normalize_temporal_text(text: str) -> str:
+
+    return " ".join(str(text or "").lower().split())
+
+def _extract_number_and_unit(query: str) -> tuple[float, str] | None:
+    text = _normalize_temporal_text(query)
+    patterns = [
+        re.compile(
+            r"\b(?P<number>\d+(?:\.\d+)?)\s*\+?\s*"
+            r"(?P<unit>years?|yrs?|months?|mos?|weeks?|days?)\b"
+        ),
+        re.compile(
+            r"\b(?P<number>"
+            + "|".join(_NUMBER_WORDS)
+            + r")\s*\+?\s*"
+            r"(?P<unit>years?|yrs?|months?|mos?|weeks?|days?)\b"
+        ),
+    ]
+
+    for pattern in patterns:
+        match = pattern.search(text)
+        if not match:
+            continue
+
+        raw = match.group("number")
+        value = (
+            float(raw)
+            if raw.replace(".", "", 1).isdigit()
+            else float(_NUMBER_WORDS[raw])
+        )
+        return value, match.group("unit")
+
+    return None
+
+def _duration_to_months(value: float, unit: str) -> float:
+
+    unit = unit.lower()
+
+    if unit.startswith(("year", "yr")):
+
+        return value * 12
+
+    if unit.startswith(("month", "mo")):
+
+        return value
+
+    if unit.startswith("week"):
+
+        return value / 4.345
+
+    return value / 30.4375
+
+def _duration_to_years(value: float, unit: str) -> float:
+
+    return _duration_to_months(value, unit) / 12
+
+def _query_skills_near_duration(query: str, known_skills: list[str]) -> list[str]:
+
+    text = _normalize_temporal_text(query)
+
+    duration = _extract_number_and_unit(text)
+
+    if not duration:
+
+        return []
+
+    duration_pattern = re.compile(
+        r"\b(?:\d+(?:\.\d+)?|"
+        + "|".join(_NUMBER_WORDS)
+        + r")\s*\+?\s*"
+        r"(?:years?|yrs?|months?|mos?|weeks?|days?)\b"
+    )
+
+    match = duration_pattern.search(text)
+
+    if not match:
+
+        return []
+
+    start = max(0, match.start() - 100)
+
+    end = min(len(text), match.end() + 120)
+
+    window = text[start:end]
+
+    found: list[tuple[int, str]] = []
+
+    for skill in known_skills:
+
+        canonical = skill.strip()
+
+        if not canonical:
+
+            continue
+
+        skill_match = re.search(rf"(?<!\w){re.escape(canonical.lower())}(?!\w)", window)
+
+        if skill_match:
+
+            found.append((abs(skill_match.start() - (match.end() - start)), canonical))
+
+    found.sort(key=lambda item: item[0])
+
+    return [skill for _, skill in found]
+
+def _has_recency_language(query: str) -> bool:
+
+    return bool(re.search(
+
+        r"\b(?:last|past|previous|prior|within|recent|recently|latest|currently|current|since)\b",
+
+        _normalize_temporal_text(query),
+
+    ))
+
+def _has_experience_language(query: str) -> bool:
+
+    return bool(re.search(
+
+        r"\b(?:experience|experienced|working|worked|using|used|hands[- ]on|professional|employment|career)\b",
+
+        _normalize_temporal_text(query),
+
+    ))
+
+def _normalize_temporal_requirements(
+
     requirements: list[SearchRequirement],
+
+    query: str,
+
+    known_skills: list[str],
+
+) -> None:
+
+    """Normalize explicit duration-vs-recency semantics independent of wording."""
+
+    duration = _extract_number_and_unit(query)
+
+    if not duration:
+
+        return
+
+    value, unit = duration
+
+    text = _normalize_temporal_text(query)
+
+    target_skills = _query_skills_near_duration(text, known_skills)
+
+    # Explicit recency words win over the generic word 'experience'.
+
+    if _has_recency_language(text):
+
+        months = max(1, int(round(_duration_to_months(value, unit))))
+
+        if _has_action_language(text):
+
+            activities = [r for r in requirements if r.type == "ACTIVITY"]
+
+            if activities:
+
+                activities[0].recency_months = months
+
+                return
+
+        if target_skills:
+
+            targets = {skill.lower() for skill in target_skills}
+
+            for requirement in requirements:
+
+                if requirement.type == "SKILL" and requirement.value.lower() in targets:
+
+                    requirement.recency_months = months
+
+                    return
+
+        for requirement in requirements:
+
+            if requirement.recency_months is not None:
+
+                requirement.recency_months = months
+
+                return
+
+        return
+
+    if not _has_experience_language(text):
+
+        return
+
+    years = _duration_to_years(value, unit)
+
+    value_text = str(years).rstrip("0").rstrip(".")
+
+    # Exact known skill mentioned with the duration => skill-specific experience.
+
+    if target_skills:
+
+        experience_requirements = [r for r in requirements if r.type == "EXPERIENCE"]
+
+        if not experience_requirements:
+
+            experience_requirements = [
+
+                SearchRequirement(
+
+                    type="EXPERIENCE",
+
+                    value=value_text,
+
+                    target=target_skills[0],
+
+                    required=True,
+
+                    operator="GTE",
+
+                    scope="SKILL",
+
+                )
+
+            ]
+
+            requirements.extend(experience_requirements)
+
+        for requirement in experience_requirements:
+
+            if requirement.scope in {None, "UNKNOWN", "OVERALL", "SKILL"}:
+
+                requirement.value = value_text
+
+                requirement.operator = "GTE"
+
+                requirement.scope = "SKILL"
+
+                requirement.target = target_skills[0]
+
+                requirement.recency_months = None
+
+        target_set = {skill.lower() for skill in target_skills}
+
+        for requirement in requirements:
+
+            if requirement.type == "SKILL" and requirement.value.lower() in target_set:
+
+                requirement.recency_months = None
+
+        return
+
+    # Preserve an already identified domain target; otherwise this is overall experience.
+
+    domain_requirement = next(
+
+        (r for r in requirements if r.type == "EXPERIENCE" and r.scope == "DOMAIN"),
+
+        None,
+
+    )
+
+    if domain_requirement is not None:
+
+        domain_requirement.value = value_text
+
+        domain_requirement.operator = "GTE"
+
+        domain_requirement.recency_months = None
+
+        return
+
+    experience_requirements = [r for r in requirements if r.type == "EXPERIENCE"]
+
+    if not experience_requirements:
+
+        experience_requirements = [
+
+            SearchRequirement(
+
+                type="EXPERIENCE",
+
+                value=value_text,
+
+                required=True,
+
+                operator="GTE",
+
+                scope="OVERALL",
+
+            )
+
+        ]
+
+        requirements.extend(experience_requirements)
+
+    for requirement in experience_requirements:
+
+        if requirement.scope in {None, "UNKNOWN", "OVERALL"}:
+
+            requirement.value = value_text
+
+            requirement.operator = "GTE"
+
+            requirement.scope = "OVERALL"
+
+            requirement.target = None
+
+            requirement.recency_months = None
+
+def _remove_unstated_experience_requirements(
+    requirements: list[SearchRequirement],
+    query: str,
     known_skills: list[str],
 ) -> list[SearchRequirement]:
-    """
-    Canonicalize known skills without inventing or expanding them.
+    """Remove LLM-inferred experience when the query does not express it.
 
-    An unknown skill is deliberately kept semantic rather than becoming a
-    false structured filter.
-    """
+    A duration attached to a skill (for example, "2 years of Python") is
+    ambiguous without an explicit experience/work/usage relation. The
+    deterministic temporal normalizer already avoids creating such an
+    experience requirement; this guard also removes an EXPERIENCE item if the
+    LLM created one anyway.
 
+    Standalone durations without a nearby canonical skill are left untouched
+    so existing overall-experience behavior remains compatible.
+    """
+    if _has_experience_language(query):
+        return requirements
+
+    duration = _extract_number_and_unit(query)
+    if not duration:
+        return requirements
+
+    target_skills = _query_skills_near_duration(
+        query,
+        known_skills,
+    )
+    if not target_skills:
+        return requirements
+
+    return [
+        requirement
+        for requirement in requirements
+        if requirement.type != "EXPERIENCE"
+    ]
+
+
+def _query_has_duration(query: str) -> bool:
+    """Return True when the recruiter explicitly supplied a duration."""
+    return _extract_number_and_unit(query) is not None
+
+
+def _skill_from_requirement_target(
+    requirement: SearchRequirement,
+    known_skills: list[str],
+) -> str | None:
+    """Resolve a requirement target/value to one explicitly named known skill."""
     known_map = {
         skill.strip().lower(): skill.strip()
         for skill in known_skills
         if skill and skill.strip()
     }
 
+    candidates = [
+        str(requirement.target or "").strip(),
+        str(requirement.value or "").strip(),
+    ]
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        canonical = known_map.get(candidate.lower())
+        if canonical:
+            return canonical
+
+    return None
+
+
+def _normalize_undated_experience_requirements(
+    requirements: list[SearchRequirement],
+    query: str,
+    known_skills: list[str],
+) -> None:
+    """Normalize experience wording that has no explicit duration.
+
+    Phrases such as "experience in Python" express demonstrated use, but do
+    not establish a numeric minimum such as one year. They therefore become
+    semantic evidence requirements plus the explicitly named skill/domain,
+    rather than an EXPERIENCE duration filter.
+
+    This is intentionally generic and does not assign any default duration.
+    """
+    if _query_has_duration(query):
+        return
+
+    for requirement in requirements:
+        if requirement.type != "EXPERIENCE":
+            continue
+
+        skill = _skill_from_requirement_target(requirement, known_skills)
+        target = str(requirement.target or "").strip()
+        value = str(requirement.value or "").strip()
+        evidence = str(requirement.evidence_query or "").strip()
+
+        if skill:
+            requirement.type = "SKILL"
+            requirement.value = skill
+            requirement.target = None
+            requirement.required = True
+            requirement.operator = "EQ"
+            requirement.scope = "EXPERIENCE"
+            requirement.evidence_query = (
+                evidence or f"experience using {skill}"
+            )
+            continue
+
+        semantic_target = target or value
+        semantic_text = evidence or (
+            f"experience with {semantic_target}"
+            if semantic_target
+            else "professional work experience"
+        )
+
+        requirement.type = "OTHER"
+        requirement.value = semantic_text
+        requirement.target = semantic_target or None
+        requirement.required = True
+        requirement.operator = "CONTAINS"
+        requirement.scope = "EXPERIENCE"
+        requirement.evidence_query = semantic_text
+
+
+def _normalize_requirements(
+
+    requirements: list[SearchRequirement],
+
+    known_skills: list[str],
+
+    query: str,
+
+) -> list[SearchRequirement]:
+
+    """
+
+    Canonicalize requirements without inventing skills or evidence scope.
+
+    Unknown skills remain semantic rather than becoming false structured
+
+    filters. Activity evidence scope is normalized from explicit wording so
+
+    project evidence is not incorrectly required for generic activities.
+
+    """
+
+    known_map = {
+
+        skill.strip().lower(): skill.strip()
+
+        for skill in known_skills
+
+        if skill and skill.strip()
+
+    }
+
     normalized: list[SearchRequirement] = []
 
     for requirement in requirements:
+
         value = requirement.value.strip()
 
         if not value:
+
             continue
 
         if requirement.type == "SKILL":
+
             canonical = known_map.get(value.lower())
 
             if canonical:
+
                 requirement.value = canonical
+
             else:
+
                 requirement.type = "OTHER"
+
                 requirement.evidence_query = (
+
                     requirement.evidence_query or value
+
                 )
 
         requirement.value = value
+
+        _normalize_activity_scope(
+
+            requirement
+
+        )
+
         normalized.append(requirement)
+
+    _normalize_undated_experience_requirements(
+
+        normalized,
+
+        query=query,
+
+        known_skills=known_skills,
+
+    )
+
+    _normalize_temporal_requirements(
+
+        normalized,
+
+        query=query,
+
+        known_skills=known_skills,
+
+    )
 
     return normalized
 
-
 def _build_legacy_projection(
+
     requirements: list[SearchRequirement],
+
 ) -> tuple[StructuredRequirements, str | None]:
+
     """
+
     Project requirements into the current pipeline's legacy fields.
 
     The requirement list remains the source of truth. This projection exists
+
     only so the existing retrieval code does not break during migration.
+
     """
 
     skills: list[str] = []
+
     role: str | None = None
+
     experience_min_years: float | None = None
+
     experience_scope: str | None = None
 
     semantic_parts: list[str] = []
 
     recency_months: int | None = None
+
     recency_scope: str | None = None
 
     for requirement in requirements:
+
         if not requirement.required:
+
             evidence = (
+
                 requirement.evidence_query
+
                 or requirement.value
+
             )
+
             semantic_parts.append(f"{evidence} preferred")
+
             continue
 
         if requirement.type == "SKILL":
+
             if requirement.value not in skills:
+
                 skills.append(requirement.value)
 
+            if requirement.scope == "EXPERIENCE":
+
+                semantic_parts.append(
+
+                    requirement.evidence_query
+
+                    or f"experience using {requirement.value}"
+
+                )
+
             if requirement.recency_months is not None:
+
                 recency_months = requirement.recency_months
+
                 recency_scope = "SKILL"
 
         elif requirement.type == "ROLE":
+
             role = requirement.value
 
             if requirement.recency_months is not None:
+
                 recency_months = requirement.recency_months
+
                 recency_scope = "OVERALL"
 
         elif requirement.type == "EXPERIENCE":
-            try:
-                experience_min_years = float(requirement.value)
-            except (TypeError, ValueError):
-                experience_min_years = None
 
-            if requirement.scope == "SKILL":
-                experience_scope = "SKILL"
-            elif requirement.scope == "OVERALL":
-                experience_scope = "OVERALL"
+            if requirement.scope in {"SKILL", "OVERALL"}:
+
+                try:
+
+                    experience_min_years = float(requirement.value)
+
+                except (TypeError, ValueError):
+
+                    experience_min_years = None
+
+                experience_scope = requirement.scope
+
+                if requirement.recency_months is not None:
+
+                    recency_months = requirement.recency_months
+
+                    recency_scope = "OVERALL"
+
+            elif requirement.scope == "DOMAIN":
+
+                # Domain experience is validated from employment evidence and
+
+                # its date ranges. Do not turn it into overall experience.
+
+                semantic_parts.append(
+
+                    requirement.evidence_query
+
+                    or requirement.value
+
+                )
+
+                if requirement.recency_months is not None:
+
+                    recency_months = requirement.recency_months
+
+                    recency_scope = "SEMANTIC"
+
             else:
+
                 experience_scope = "UNKNOWN"
 
-            if requirement.recency_months is not None:
-                recency_months = requirement.recency_months
-                recency_scope = "OVERALL"
-
         else:
+
             semantic_parts.append(
+
                 requirement.evidence_query
+
                 or requirement.value
+
             )
 
             if requirement.recency_months is not None:
+
                 recency_months = requirement.recency_months
+
                 recency_scope = "SEMANTIC"
 
     structured = StructuredRequirements(
+
         skills=skills,
+
         role=role,
+
         recency_months=recency_months,
+
         recency_scope=recency_scope,
+
         experience_min_years=experience_min_years,
+
         experience_scope=experience_scope,
+
     )
 
     semantic_requirement = (
+
         " AND ".join(semantic_parts)
+
         if semantic_parts
+
         else None
+
     )
 
     return structured, semantic_requirement
 
+def _find_relevant_skill_candidates(
+
+    query: str,
+
+    known_skills: list[str],
+
+    max_candidates: int = 50,
+
+) -> list[str]:
+
+    """Find canonical skills explicitly mentioned in the recruiter query.
+
+    This is only a high-recall lexical gate for prompt-size control. It does
+
+    not classify requirements or expand broad domains into technology lists.
+
+    The complete known_skills collection is still used after the LLM response
+
+    for deterministic canonicalization.
+
+    """
+
+    text = query.strip().lower()
+
+    if not text:
+
+        return []
+
+    matches: list[tuple[int, int, str]] = []
+
+    seen: set[str] = set()
+
+    for skill in known_skills:
+
+        canonical = skill.strip()
+
+        if not canonical:
+
+            continue
+
+        key = canonical.lower()
+
+        if key in seen:
+
+            continue
+
+        if _contains_phrase(text, key):
+
+            matches.append((len(key), text.find(key), canonical))
+
+            seen.add(key)
+
+    matches.sort(key=lambda item: (-item[0], item[1], item[2].lower()))
+
+    return [skill for _, _, skill in matches[:max_candidates]]
 
 def classify_search_intent(
+
     query: str,
+
     known_skills: list[str],
+
 ) -> SearchIntent:
 
     query = query.strip()
 
-    skills_text = "\n".join(
-        f"- {skill}"
-        for skill in known_skills
+    relevant_skill_candidates = _find_relevant_skill_candidates(
+
+        query=query,
+
+        known_skills=known_skills,
+
     )
 
+    skills_text = "\n".join(
+
+        f"- {skill}"
+
+        for skill in relevant_skill_candidates
+
+    )
+
+    if not skills_text:
+
+        skills_text = "(none explicitly matched; do not invent a canonical skill)"
+
     prompt = f"""
+
 You are the query-understanding layer for a recruiter candidate search system.
 
-Your ONLY job is to understand the recruiter's natural-language query.
+Your ONLY job is to convert the recruiter's natural-language request into the structured SearchIntent schema. Do not retrieve, rank, qualify, or evaluate candidates.
 
-You must NOT:
-- retrieve candidates
-- rank candidates
-- evaluate candidates
-- invent candidate information
-- invent skills
-- infer unstated technologies
-- expand broad technology terms into lists of technologies
+Extract:
 
-You must extract:
+1. requested_count and whether the count was explicit
 
-1. requested_count
-2. count_explicit
-3. requirements
-4. reason
+2. requirements: the source of truth, with one independently verifiable recruiter requirement per item
 
-The final route is determined by Python after your response.
+3. reason: a short explanation of the interpretation
 
-The `requirements` list is the source-of-truth description of what the
-recruiter wants. Each requirement must describe one independently verifiable
-claim. Do not decide whether a candidate satisfies it.
+Core rules:
 
-For each requirement:
-- `type` identifies the kind of claim.
-- `value` contains the requested concept or value.
-- `required=true` unless the recruiter explicitly says preferred/optional.
-- `operator` represents numeric comparison or explicit NOT/PREFERRED meaning.
-- `scope` identifies what the requirement refers to when relevant.
-- `recency_months` belongs to the requirement it modifies.
-- `evidence_query` preserves the natural-language evidence that should be
-  retrieved when the requirement is semantic.
+- Extract only what the recruiter explicitly asks for. Never invent candidate facts or unstated technologies.
 
-The requirement model is independent of STRUCTURED, SEMANTIC, and HYBRID.
-Routing is an execution decision made later.
+- SKILL means one specific technology/skill explicitly requested. ROLE means an explicit job title/role. Do not turn a broad domain or ecosystem into a list of skills.
 
-Examples:
+- The supplied KNOWN SKILL CANDIDATES are only lexical canonicalization hints. They are not permission to infer additional technologies.
 
-"Python developers"
--> SKILL / Python / required=true
+- ACTIVITY captures work/actions such as built REST APIs, deployed applications, implemented authentication, or developed ML systems. Use PROJECT scope only when project work is explicit; use EXPERIENCE scope for hands-on/professional/work/employment experience; otherwise use UNKNOWN.
 
-"finance managers with 6 years experience in IT industry"
--> ROLE / finance manager / required=true
--> EXPERIENCE / 6 / operator=GTE / scope=OVERALL / required=true
--> INDUSTRY / IT / required=true /
-   evidence_query="worked in the IT industry"
+- INDUSTRY captures explicit industry/domain experience requirements.
 
-"Python developers who recently built machine learning projects"
--> SKILL / Python / required=true
--> ACTIVITY / built machine learning projects / required=true /
-   recency_months=12 / scope=PROJECT /
-   evidence_query="built machine learning projects"
+- EXPERIENCE uses operator GTE only when a numeric duration is explicitly present. Scope is SKILL for a specific skill, OVERALL for total professional experience, DOMAIN for an explicit broad technology/domain area, and UNKNOWN only when the scope cannot be determined.
 
-IMPORTANT:
-A temporal modifier belongs to the requirement it modifies. Do not attach
-"recently" to Python merely because Python appears elsewhere in the query.
+- "experience in Python", "experience with Python", and "Python experience" mean demonstrated Python work/use, but they do NOT imply any minimum number of years. Represent the explicit Python skill and preserve an evidence_query describing experience using Python. Never invent "1 year" or another duration.
 
-The legacy structured_requirements and semantic_requirement fields are kept
-for compatibility with the current pipeline. They must be consistent with the
-requirement list, but the requirement list is the richer representation.
+- "5 years of Python experience" means EXPERIENCE value=5, operator=GTE, scope=SKILL, target=Python, plus the Python skill requirement when appropriate.
 
-==================================================
-REQUIREMENT TYPES
-==================================================
+- "5 years of experience who know Python" means overall professional experience plus a Python skill requirement.
 
-Use these requirement types:
+- "5 years of experience with backend technologies" means EXPERIENCE value=5, operator=GTE, scope=DOMAIN, target/value describing backend technologies. Keep the domain semantic; do not expand it into a hard-coded skill list.
 
-- SKILL: one specific known technology or skill.
-- ROLE: an explicit job title or role.
-- EXPERIENCE: a numeric professional-experience requirement.
-- ACTIVITY: an action/work/project requirement such as "built RAG systems".
-- INDUSTRY: an industry/context requirement such as "worked in the IT industry".
-- OTHER: an explicit requirement that does not safely fit another type.
+- A duration does NOT by itself establish an EXPERIENCE requirement. Only create EXPERIENCE when the recruiter explicitly expresses experience, work, usage, employment, or a comparable duration relationship. A bare duration attached to a skill, such as "2 years of Python", must remain a SKILL requirement unless the query explicitly establishes that the duration measures experience.
 
-Do not force a requirement into SKILL merely because one of its words is a
-known database skill.
+- Explicit recency language takes precedence over duration semantics. Examples of recency language include last, past, previous, within, recently, latest, current/currently, or since.
 
-"built machine learning projects"
--> ACTIVITY, not SKILL
+- Attach recency_months to the requirement it actually modifies. Do not attach recency to a skill merely because that skill appears elsewhere in the query.
 
-"worked in the IT industry"
--> INDUSTRY, not SKILL
+- "Python used in the last 6 months" is skill recency; "recently built ML projects" is activity/project recency; "5 years of experience" is experience duration, not recency.
 
-"worked with Microsoft ecosystem"
--> OTHER/semantic, not a list of Microsoft skills.
+- Preserve the recruiter's wording in evidence_query for semantic requirements so downstream retrieval can find evidence.
 
-==================================================
-TEMPORAL OWNERSHIP
-==================================================
+- Role is structured only when the recruiter explicitly requests a role/title. Do not convert generic technology/domain language into a job title.
 
-Recency must belong to the requirement whose evidence must be recent.
+- Multiple requirements are normally independent AND requirements unless the recruiter explicitly expresses OR, NOT, or preference. Use operator PREFERRED for explicitly preferred/optional requirements and NOT for explicit exclusions.
 
-"recent Python experience"
--> SKILL / Python / recency_months=12
-
-"recently built ML projects"
--> ACTIVITY / built ML projects / recency_months=12
-
-"Python developers who recently built ML projects"
--> SKILL / Python
--> ACTIVITY / built ML projects / recency_months=12
-
-Do not use unrelated recent activity to prove that the target requirement was
-recent.
-
-==================================================
-REQUIREMENT DECOMPOSITION
-==================================================
-
-Do not collapse multiple independently testable claims into one semantic
-sentence when they can be represented separately.
-
-"finance managers with 6 years experience in IT industry"
-
-must contain:
-
-ROLE / finance manager
-EXPERIENCE / 6 / GTE
-INDUSTRY / IT
-
-The downstream system will retrieve and validate these claims separately.
-
-==================================================
-STRUCTURED REQUIREMENTS
-==================================================
-
-Extract only the structured requirements that are explicitly present in the
-recruiter's query.
-
-All structured fields are optional.
-
-Supported structured fields:
-
-- skills
-- role
-- recency_months
-- recency_scope
-- experience_min_years
-- experience_scope
-
-==================================================
-SKILLS
-==================================================
-
-A structured skill means ONE SPECIFIC skill explicitly required by the recruiter.
-
-Only use a skill if it exists in the database skill list.
+- Do not decide whether any candidate satisfies a requirement. Do not produce candidate IDs or matches.
 
 Examples:
 
-"Python developers"
--> skills = ["Python"]
+"Python developers" -> SKILL Python
 
-"developers with AWS"
--> skills = ["AWS"]
+"finance managers with 6 years experience in IT industry" -> ROLE finance manager; EXPERIENCE 6 GTE OVERALL; INDUSTRY IT with semantic evidence
 
-"developers experienced in Python"
--> skills = ["Python"]
+"Python developers who recently built machine learning projects" -> SKILL Python; ACTIVITY built machine learning projects, scope PROJECT, recency 12 months
 
-"developers who worked with Python"
--> skills = ["Python"]
+"developers with 5 years of Python experience" -> EXPERIENCE 5 GTE SKILL target Python; SKILL Python
 
-"developers familiar with React"
--> skills = ["React"]
+"developers with 2 years of Python" -> SKILL Python only; do not infer an EXPERIENCE requirement
 
-"developers proficient in PostgreSQL"
--> skills = ["PostgreSQL"]
+"developers with experience in Python" -> SKILL Python with EXPERIENCE evidence; no numeric minimum
 
-==================================================
-DO NOT INFER RELATED SKILLS
-==================================================
+"developers with experience using Java" -> SKILL Java with EXPERIENCE evidence; no numeric minimum
 
-Never expand a broad term into related skills.
+"developers with 5 years of experience with backend technologies" -> EXPERIENCE 5 GTE DOMAIN target backend technologies with semantic evidence
 
-If the database contains:
+"built REST APIs" -> ACTIVITY built REST APIs, scope UNKNOWN
 
-Microsoft Azure
-Microsoft Dynamics 365
-Microsoft Office Suite
+"hands-on experience deploying applications using Docker" -> ACTIVITY deploying applications using Docker, scope EXPERIENCE
 
-and the recruiter says:
+The final route and legacy structured fields are rebuilt deterministically by Python after your response. Return only the structured SearchIntent object required by the schema.
 
-"Microsoft ecosystem"
-
-DO NOT output:
-
-Microsoft Azure
-Microsoft Dynamics 365
-Microsoft Office Suite
-
-Instead:
-
-skills = []
-semantic_requirement = "worked with Microsoft ecosystem"
-
-The recruiter must explicitly name a specific skill for it to become structured.
-
-==================================================
-SPECIFIC SKILL VS BROAD DOMAIN
-==================================================
-
-Specific skill:
-
-"worked with Python"
--> structured
-
-"worked with AWS"
--> structured
-
-"worked with Docker"
--> structured
-
-Broad domain:
-
-"worked with Microsoft ecosystem"
--> semantic
-
-"worked with Microsoft technologies"
--> semantic
-
-"worked with cloud technologies"
--> semantic
-
-"worked with enterprise platforms"
--> semantic
-
-"worked with payment systems"
--> semantic
-
-"worked with distributed systems"
--> semantic
-
-"worked with AI technologies"
--> semantic
-
-"worked with the Microsoft stack"
--> semantic
-
-Broad concepts must remain semantic.
-
-==================================================
-ROLE
-==================================================
-
-Extract a role or job title when the recruiter specifies one.
-
-Examples:
-
-"backend developers"
--> role = "backend developer"
-
-"data scientists"
--> role = "data scientist"
-
-"finance managers"
--> role = "finance manager"
-
-"senior Python developers"
--> role = "senior Python developer"
-
-"machine learning engineers"
--> role = "machine learning engineer"
-
-Do not invent a role if the query does not specify one.
-
-Do not treat a technology as a role.
-
-For example:
-
-"Python and AWS experience"
--> skills = ["Python", "AWS"]
--> role = null
-
-==================================================
-SKILL POSSESSION
-==================================================
-
-These phrases normally indicate skill possession:
-
-worked with
-experience with
-experienced with
-used
-knowledge of
-familiar with
-hands-on experience with
-proficient in
-experience using
-skilled in
-expert in
-
-However, they are structured ONLY when their object is a specific known skill.
-
-Example:
-
-"worked with Python"
--> skills = ["Python"]
--> semantic_requirement = null
-
-But:
-
-"worked with Microsoft ecosystem"
--> skills = []
--> semantic_requirement = "worked with Microsoft ecosystem"
-
-==================================================
-ACTIONS AND PROJECTS
-==================================================
-
-If the recruiter asks what the candidate actually did, use semantic_requirement.
-
-Action examples:
-
-built
-developed
-created
-implemented
-designed
-deployed
-integrated
-engineered
-trained
-optimized
-maintained
-automated
-architected
-delivered
-migrated
-scaled
-led
-managed
-configured
-orchestrated
-debugged
-modernized
-
-Examples:
-
-"developers who built RAG systems"
--> skills = []
--> semantic_requirement = "built RAG systems"
-
-"developers who developed machine learning projects"
--> skills = []
--> semantic_requirement = "developed machine learning projects"
-
-"developers who implemented payment systems"
--> skills = []
--> semantic_requirement = "implemented payment systems"
-
-"developers who designed scalable systems"
--> skills = []
--> semantic_requirement = "designed scalable systems"
-
-==================================================
-SKILL + ACTION
-==================================================
-
-If there is both a specific skill and a meaningful action/project requirement,
-separate them.
-
-"Python developers who built RAG systems"
-
--> skills = ["Python"]
--> semantic_requirement = "built RAG systems"
-
-"Java developers who developed payment systems"
-
--> skills = ["Java"]
--> semantic_requirement = "developed payment systems"
-
-"AWS developers who designed scalable systems"
-
--> skills = ["AWS"]
--> semantic_requirement = "designed scalable systems"
-
-==================================================
-IMPORTANT: ACTIONS MUST NOT BECOME SKILLS
-==================================================
-
-"built machine learning models"
-
-Do NOT output:
-
-skills = ["machine learning"]
-
-Instead:
-
-skills = []
-semantic_requirement = "built machine learning models"
-
-The fact that a known technology appears inside a project description does not
-automatically make it a structured skill.
-
-==================================================
-ECOSYSTEM RULE
-==================================================
-
-The following are broad concepts and should normally be semantic:
-
-ecosystem
-technology ecosystem
-technology family
-technology stack
-tech stack
-stack
-platform family
-platforms
-products
-technology domain
-technologies
-technology environment
-enterprise environment
-enterprise stack
-cloud ecosystem
-AI ecosystem
-data ecosystem
-Microsoft ecosystem
-AWS ecosystem
-Java ecosystem
-
-Examples:
-
-"Microsoft ecosystem"
--> semantic
-
-"AWS ecosystem"
--> semantic
-
-"cloud ecosystem"
--> semantic
-
-"enterprise technology stack"
--> semantic
-
-Do not expand these into individual database skills.
-
-==================================================
-EXPERIENCE
-==================================================
-
-Extract explicit minimum experience.
-
-Examples:
-
-"5 years experience"
--> experience_min_years = 5
-
-"5+ years experience"
--> experience_min_years = 5
-
-"at least 5 years experience"
--> experience_min_years = 5
-
-"minimum 5 years experience"
--> experience_min_years = 5
-
-"8 years experienced candidates"
--> experience_min_years = 8
-
-"candidates with 8 years of experience"
--> experience_min_years = 8
-
-"2.5 years of experience"
--> experience_min_years = 2.5
-
-Do not invent experience requirements.
-
-==================================================
-EXPERIENCE SCOPE
-==================================================
-
-experience_scope describes what the experience requirement refers to.
-
-Use "SKILL" when the experience requirement is specifically tied to
-a particular skill.
-
-Example:
-
-"developers with 5 years of Python experience"
-
--> experience_min_years = 5
--> experience_scope = "SKILL"
--> skills = ["Python"]
-
-Use "OVERALL" when the experience requirement refers to the candidate's
-overall professional experience.
-
-Example:
-
-"developers with 5 years of experience who know Python"
-
--> experience_min_years = 5
--> experience_scope = "OVERALL"
--> skills = ["Python"]
-
-Use "UNKNOWN" only when an experience requirement is present but the query
-does not provide enough information to determine whether the experience is
-overall or skill-specific.
-
-If there is no experience requirement:
-
--> experience_min_years = null
--> experience_scope = null
-
-==================================================
-RECENCY
-==================================================
-
-Use recency_months only when explicitly stated or clearly implied.
-
-The IMPORTANT rule is:
-
-recency_scope identifies WHAT the recency requirement applies to.
-
-Use:
-
-- "SKILL" when recency applies to a specific structured skill.
-- "SEMANTIC" when recency applies to a semantic action, project, or work
-  requirement.
-- "OVERALL" when recency refers to the candidate's overall professional
-  activity.
-- "UNKNOWN" only when recency is present but its target cannot safely be
-  determined.
-
-Examples:
-
-"recent Python experience"
-
--> skills = ["Python"]
--> recency_months = 12
--> recency_scope = "SKILL"
-
-"recently used Python"
-
--> skills = ["Python"]
--> recency_months = 12
--> recency_scope = "SKILL"
-
-"Python experience in the last 6 months"
-
--> skills = ["Python"]
--> recency_months = 6
--> recency_scope = "SKILL"
-
-"recently worked on machine learning projects"
-
--> skills = []
--> semantic_requirement = "worked on machine learning projects"
--> recency_months = 12
--> recency_scope = "SEMANTIC"
-
-"Python developers who recently worked on machine learning projects"
-
--> skills = ["Python"]
--> semantic_requirement = "worked on machine learning projects"
--> recency_months = 12
--> recency_scope = "SEMANTIC"
-
-"Python developers with recent experience"
-
-If the query does not clearly identify what the recent experience refers to:
-
--> skills = ["Python"]
--> recency_months = 12
--> recency_scope = "UNKNOWN"
-
-"Python developers"
-
--> recency_months = null
--> recency_scope = null
-
-Do NOT automatically attach recency to a structured skill when the wording
-clearly makes recency modify a semantic action or project.
-
-For example:
-
-"Python developers who recently built ML systems"
-
-The recency applies to:
-
-"built ML systems"
-
-NOT automatically to:
-
-"Python"
-
-==================================================
-COUNT
-==================================================
-
-Extract a count only when explicitly requested.
-
-"find 10 candidates"
--> requested_count = 10
--> count_explicit = true
-
-"find 20 Python developers"
--> requested_count = 20
--> count_explicit = true
-
-"top 5 candidates"
--> requested_count = 5
--> count_explicit = true
-
-"find Python developers"
--> requested_count = null
--> count_explicit = false
-
-Never invent a count.
-
-==================================================
-MULTIPLE SPECIFIC SKILLS
-==================================================
-
-If multiple specific skills are explicitly required:
-
-"Python and AWS developers"
--> skills = ["Python", "AWS"]
-
-"developers with Python, Docker and PostgreSQL"
--> skills = ["Python", "Docker", "PostgreSQL"]
-
-Do not add related skills.
-
-==================================================
-OR REQUIREMENTS
-==================================================
-
-The current structured schema cannot represent OR semantics.
-
-Therefore:
-
-"Python or Java developers"
-
-must NOT become:
-
-skills = ["Python", "Java"]
-
-Instead preserve it semantically:
-
-skills = []
-semantic_requirement = "Python or Java developers"
-
-This prevents the system from incorrectly treating OR as AND.
-
-==================================================
-NEGATION
-==================================================
-
-The current structured schema cannot represent exclusions.
-
-For:
-
-"Python developers who do not use Java"
-
-use:
-
-skills = ["Python"]
-semantic_requirement = "Python developers who do not use Java"
-
-Do NOT put Java into structured skills.
-
-==================================================
-PREFERRED / OPTIONAL
-==================================================
-
-The current structured schema cannot represent optional or preferred skills.
-
-For:
-
-"Python developers, preferably with AWS"
-
-use:
-
-skills = ["Python"]
-semantic_requirement = "AWS preferred"
-
-Do not make AWS mandatory.
-
-==================================================
-AMBIGUOUS TERMS
-==================================================
-
-Do not guess the meaning of broad terms.
-
-Examples:
-
-"Microsoft developers"
-"cloud developers"
-"enterprise developers"
-"AI developers"
-"data developers"
-
-If the term cannot safely map to one specific database skill, preserve it
-semantically.
-
-Do not expand it into multiple skills.
-
-==================================================
-HYBRID
-==================================================
-
-Hybrid means there is at least one structured requirement AND one semantic
-requirement.
-
-Example:
-
-"find 8 years experienced candidates who worked with Microsoft ecosystem"
-
-structured:
-
-skills = []
-experience_min_years = 8
-experience_scope = "OVERALL"
-
-semantic:
-
-"worked with Microsoft ecosystem"
-
-The resulting route will be HYBRID.
-
-Example:
-
-"find 5 Python developers who built RAG systems"
-
-structured:
-
-skills = ["Python"]
-
-semantic:
-
-"built RAG systems"
-
-The resulting route will be HYBRID.
-
-Example:
-
-"find 10 Python developers who recently worked on machine learning projects"
-
-structured:
-
-skills = ["Python"]
-recency_months = 12
-recency_scope = "SEMANTIC"
-
-semantic:
-
-"worked on machine learning projects"
-
-The resulting route will be HYBRID.
-
-==================================================
-STRUCTURED EXAMPLES
-==================================================
-
-"Python developers"
-
-skills = ["Python"]
-semantic_requirement = null
-
-"Python developers with 5 years experience"
-
-skills = ["Python"]
-experience_min_years = 5
-experience_scope = "OVERALL"
-semantic_requirement = null
-
-"developers with 5 years of Python experience"
-
-skills = ["Python"]
-experience_min_years = 5
-experience_scope = "SKILL"
-semantic_requirement = null
-
-"backend developers with 5 years of experience"
-
-role = "backend developer"
-experience_min_years = 5
-experience_scope = "OVERALL"
-
-==================================================
-SEMANTIC EXAMPLES
-==================================================
-
-"developers who built RAG systems"
-
-skills = []
-semantic_requirement = "built RAG systems"
-
-"developers who built payment systems"
-
-skills = []
-semantic_requirement = "built payment systems"
-
-"developers who worked with Microsoft ecosystem"
-
-skills = []
-semantic_requirement = "worked with Microsoft ecosystem"
-
-==================================================
-HYBRID EXAMPLES
-==================================================
-
-"Python developers who built RAG systems"
-
-skills = ["Python"]
-semantic_requirement = "built RAG systems"
-
-"Python developers who built payment systems"
-
-skills = ["Python"]
-semantic_requirement = "built payment systems"
-
-"8 years experienced candidates who worked with Microsoft ecosystem"
-
-skills = []
-experience_min_years = 8
-experience_scope = "OVERALL"
-semantic_requirement = "worked with Microsoft ecosystem"
-
-"Python developers with 5 years experience who built RAG systems"
-
-skills = ["Python"]
-experience_min_years = 5
-experience_scope = "OVERALL"
-semantic_requirement = "built RAG systems"
-
-"Python developers who recently worked on machine learning projects"
-
-skills = ["Python"]
-semantic_requirement = "worked on machine learning projects"
-recency_months = 12
-recency_scope = "SEMANTIC"
-
-==================================================
-DATABASE SKILLS
-==================================================
+KNOWN SKILL CANDIDATES MENTIONED IN QUERY:
 
 {skills_text}
 
-==================================================
-RECRUITER QUERY
-==================================================
+RECRUITER QUERY:
 
 {query}
 
-==================================================
-FINAL RULES
-==================================================
-
-1. Only extract explicitly requested specific skills.
-2. Never invent skills.
-3. Never expand ecosystems into technologies.
-4. Never expand domains into technologies.
-5. Never convert projects into skills.
-6. Never convert actions into skills.
-7. Keep meaningful project/action requirements semantic.
-8. "worked with Python" is structured.
-9. "worked with Microsoft ecosystem" is semantic.
-10. Role is structured when an explicit candidate role or job title is given.
-11. Experience is structured.
-12. Use experience_scope to distinguish overall experience from skill-specific experience.
-13. Explicit recency is structured.
-14. Use recency_scope to identify what the recency requirement applies to.
-15. Recency of a semantic action/project must remain attached to the semantic requirement.
-16. Explicit count is structured metadata.
-17. OR requirements are semantic because the current schema cannot represent OR.
-18. Exclusions are semantic because the current schema cannot represent NOT.
-19. Preferred skills are semantic because the current schema cannot represent optional requirements.
-20. Do not retrieve candidates.
-21. Do not rank candidates.
-22. Do not evaluate candidates.
-23. Do not decide candidate matches.
-"""
-
+    """
 
     llm = _create_llm()
 
     structured_llm = llm.with_structured_output(
+
         SearchIntent,
+
         method="json_schema",
+
     )
 
     result = structured_llm.invoke(prompt)
 
     result.structured_requirements.skills = (
+
         _normalize_skills(
+
             result.structured_requirements.skills,
+
             known_skills,
+
         )
+
+    )
+
+    result.requirements = _remove_unstated_experience_requirements(
+        result.requirements,
+        query=query,
+        known_skills=known_skills,
     )
 
     requested_count, count_explicit = (
+
         _normalize_count(
+
             result.requested_count,
+
             result.count_explicit,
+
         )
+
     )
 
     result.requested_count = requested_count
+
     result.count_explicit = count_explicit
 
     result.requirements = _normalize_requirements(
-        result.requirements,
-        known_skills,
-    )
+
+    result.requirements,
+
+    known_skills,
+
+    query,
+
+)
 
     # Rebuild the legacy representation from the requirement list so the
+
     # model cannot leave the two representations inconsistent.
+
     (
+
         result.structured_requirements,
+
         result.semantic_requirement,
+
     ) = _build_legacy_projection(
+
         result.requirements,
+
     )
 
     result.semantic_requirement = (
+
         _repair_semantic_requirement(
+
             result.semantic_requirement,
+
             result.structured_requirements.skills,
+
         )
+
     )
 
     result.route = _derive_route(
+
         result.structured_requirements,
+
         result.semantic_requirement,
+
         result.requirements,
+
     )
 
     return result
