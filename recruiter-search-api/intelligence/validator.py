@@ -3836,6 +3836,194 @@ def _activity_validation(
     )
 
 
+def _merge_date_ranges(ranges: list[tuple[date, date]]) -> int:
+    """Return the union length in whole months for employment date ranges."""
+    if not ranges:
+        return 0
+
+    today = date.today()
+    normalized = []
+
+    for start, end in ranges:
+        if start is None:
+            continue
+
+        end = end or today
+
+        if end < start:
+            continue
+
+        normalized.append((start, min(end, today)))
+
+    if not normalized:
+        return 0
+
+    normalized.sort(key=lambda item: item[0])
+    merged = [normalized[0]]
+
+    for start, end in normalized[1:]:
+        previous_start, previous_end = merged[-1]
+
+        if start <= previous_end:
+            merged[-1] = (previous_start, max(previous_end, end))
+        else:
+            merged.append((start, end))
+
+    total_months = 0
+
+    for start, end in merged:
+        months = (
+            (end.year - start.year) * 12
+            + (end.month - start.month)
+        )
+
+        if end.day >= start.day:
+            months += 1
+
+        total_months += max(months, 0)
+
+    return total_months
+
+
+def _domain_experience_validation(
+    requirement: dict,
+    evidence: list[dict],
+) -> tuple[str, float, str, dict | None]:
+    """Validate minimum experience in a semantic technology/work domain."""
+
+    target = str(
+        requirement.get("target")
+        or requirement.get("evidence_query")
+        or ""
+    ).strip()
+
+    try:
+        minimum_years = float(requirement.get("minimum_years"))
+    except (TypeError, ValueError):
+        minimum_years = None
+
+    if minimum_years is None:
+        try:
+            minimum_years = float(requirement.get("value"))
+        except (TypeError, ValueError):
+            return (
+                "UNCERTAIN",
+                0.0,
+                "The domain experience requirement has no numeric minimum.",
+                None,
+            )
+
+    usable = [
+        item
+        for item in evidence
+        if (
+            isinstance(item, dict)
+            and str(item.get("text") or "").strip()
+            and _matches_requirement_scope(
+                {**requirement, "scope": "EXPERIENCE"},
+                item,
+            )
+        )
+    ]
+
+    if not usable:
+        return (
+            "UNCERTAIN",
+            0.0,
+            "No employment evidence was retrieved for the requested domain.",
+            None,
+        )
+
+    query = target or str(requirement.get("value") or "").strip()
+
+    scores = _reranker.predict(
+        [
+            (
+                query,
+                str(item.get("text") or "").strip(),
+            )
+            for item in usable
+        ]
+    )
+
+    relevant = [
+        (item, float(score))
+        for item, score in zip(usable, scores)
+        if float(score) >= SEMANTIC_VALIDATION_MIN_SCORE
+    ]
+
+    if not relevant:
+        best_score = max(float(score) for score in scores)
+
+        return (
+            "NO_MATCH",
+            _score_to_confidence(best_score),
+            "Employment evidence is not sufficiently relevant to the requested domain.",
+            None,
+        )
+
+    ranges = []
+    best_item = None
+    best_score = None
+
+    for item, score in relevant:
+        start = _parse_date(item.get("start_date"))
+        end = _parse_date(item.get("end_date"))
+
+        if start is None:
+            continue
+
+        ranges.append((start, end))
+
+        if best_score is None or score > best_score:
+            best_score = score
+            best_item = item
+
+    if not ranges:
+        return (
+            "UNCERTAIN",
+            0.0,
+            "Relevant employment evidence was found, but its dates are insufficient to measure domain experience.",
+            None,
+        )
+
+    actual_months = _merge_date_ranges(ranges)
+    required_months = minimum_years * 12
+
+    confidence = _score_to_confidence(
+        best_score
+        if best_score is not None
+        else SEMANTIC_VALIDATION_MIN_SCORE
+    )
+
+    payload = _build_evidence_payload(
+        best_item,
+        _highlight_query_phrases(query),
+    )
+
+    if actual_months >= required_months:
+        return (
+            "MATCH",
+            confidence,
+            (
+                f"The candidate has approximately {actual_months} months "
+                f"of relevant employment experience for the requested "
+                f"domain, meeting the {minimum_years:g}-year minimum."
+            ),
+            payload,
+        )
+
+    return (
+        "NO_MATCH",
+        confidence,
+        (
+            f"The candidate has approximately {actual_months} months "
+            f"of relevant employment experience for the requested "
+            f"domain, below the {minimum_years:g}-year minimum."
+        ),
+        payload,
+    )
+
 def _validate_requirement(
 
 
