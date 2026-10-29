@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "description": "Representative GenieHire regression queries. Add human-reviewed candidate judgments before interpreting precision or recall.",
+  "queries": [
+    {"id":"structured_python_role","category":"structured.skills_roles","query":"Python developers","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"structured_finance_role","category":"structured.roles","query":"Finance Managers","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"structured_experience","category":"structured.experience","query":"Python developers with at least 5 years of experience","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"structured_location","category":"structured.location","query":"Candidates located in Maharashtra","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"semantic_recency","category":"structured.recency_semantic","query":"Candidates who recently worked on machine learning projects","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"semantic_financial_transformation","category":"semantic.projects_domain","query":"Candidates with strong experience in financial transformation projects","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"semantic_sap_implementation","category":"semantic.activities","query":"Candidates with SAP implementation experience","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"semantic_ai_products","category":"semantic.projects","query":"Candidates who built products with AI","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"semantic_erp_implementation","category":"semantic.activities","query":"Candidates who implemented ERP systems","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"semantic_financial_reporting","category":"semantic.activities","query":"Candidates with financial reporting experience","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"semantic_cloud","category":"semantic.technology_families","query":"Candidates with cloud technology experience","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"hybrid_java_distributed","category":"hybrid.multiple_requirements","query":"Java developers in Pune who designed scalable distributed systems","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"hybrid_finance_it","category":"hybrid.industry_experience","query":"Finance Manager with 6 years experience in the IT industry","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"edge_ambiguous_finance","category":"edge.ambiguous","query":"Finance transformation leaders with ERP experience","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}},
+    {"id":"edge_negative_skill","category":"edge.negative_requirement","query":"Python developers without Java experience","top_k":10,"ground_truth":{"complete":false,"candidates":[],"requirements":[]}}
+  ]
+}

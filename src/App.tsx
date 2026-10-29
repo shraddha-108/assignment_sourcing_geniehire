@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 
 const API_URL = "http://127.0.0.1:8000/search";
@@ -8,6 +8,31 @@ type MatchedSkill = {
   skill: string;
   last_used?: string | null;
   total_months?: number;
+};
+
+type ExperienceTimelineEntry = {
+  role?: string | null;
+  company?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_current?: boolean;
+  duration_months?: number | null;
+  description?: string | null;
+};
+
+type ProjectEntry = {
+  title: string;
+  description?: string | null;
+  url?: string | null;
+  skills?: string[];
+};
+
+type EducationEntry = {
+  institution?: string | null;
+  degree?: string | null;
+  field_of_study?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
 };
 
 type BackendMatchedSkill =
@@ -21,28 +46,69 @@ type BackendMatchedSkill =
 
 type Evidence = {
   source?: string;
+  experience_id?: number;
+  evidence_type?: string;
+  requirement?: string;
+  source_id?: number | string | null;
+  evidence_id?: number | string | null;
+  resume_id?: number | null;
+  resume_section_id?: number | null;
+  section_type?: string | null;
+  section_title?: string | null;
   text?: string;
   similarity?: number;
   reranker_score?: number;
 };
 
+type MatchedRequirement = {
+  type: string;
+  requirement_types?: string[];
+  requirement: string;
+  matched: boolean;
+  mandatory?: boolean;
+  match_mode?: "HARD" | "SOFT";
+  status?: "MATCH" | "PARTIAL_MATCH" | "NO_MATCH";
+  candidate_value?: string | number | null;
+  evidence?: Evidence[];
+};
+
+type BackendExplanation = string;
+
 type BackendCandidate = {
   id?: number;
   name?: string;
   email?: string | null;
+  phone?: string | null;
   score?: number;
   match_score?: number;
-  match_status?: string;
+  match_status?: "MATCH" | "PARTIAL_MATCH" | "NO_MATCH" | string;
+  headline?: string | null;
+  location?: string | null;
+  summary?: string | null;
+  total_experience_months?: number;
+  experience_timeline?: ExperienceTimelineEntry[];
+  education?: EducationEntry[];
+  profile_skills?: string[];
+  projects?: ProjectEntry[];
+  linkedin_url?: string | null;
+  github_url?: string | null;
+  portfolio_url?: string | null;
 
   candidate?: {
     id?: number;
     name?: string;
     email?: string | null;
+    phone?: string | null;
+    headline?: string | null;
+    location?: string | null;
+    summary?: string | null;
     total_experience_months?: number;
   };
 
   matched_skills?: BackendMatchedSkill[];
   evidence?: Evidence[];
+  matched_requirements?: MatchedRequirement[];
+  explanation?: BackendExplanation[];
 
   skill?: string;
   last_used_date?: string | null;
@@ -60,17 +126,36 @@ type Candidate = {
   id: number;
   name: string;
   email: string | null;
+  phone: string | null;
   score: number;
+  headline: string | null;
+  location: string | null;
+  summary: string | null;
+  total_experience_months?: number;
+  experience_timeline: ExperienceTimelineEntry[];
+  education: EducationEntry[];
+  profile_skills: string[];
+  projects: ProjectEntry[];
+  linkedin_url: string | null;
+  github_url: string | null;
+  portfolio_url: string | null;
   matched_skills: MatchedSkill[];
   evidence: Evidence[];
+  matched_requirements: MatchedRequirement[];
+  explanation: BackendExplanation[];
   match_status?: string;
 };
 
 type StructuredRequirements = {
   skills: string[];
+  roles?: string[];
+  companies?: string[];
+  location?: string | null;
   role?: string | null;
   recency_months: number | null;
   experience_min_years: number | null;
+  experience_max_years?: number | null;
+  relevant_experience_min_years?: number | null;
   experience_scope?: string | null;
 };
 
@@ -80,16 +165,36 @@ type RoutingPacket = {
   count_explicit: boolean;
   structured_requirements: StructuredRequirements;
   semantic_requirement: string | null;
+  semantic_requirements?: string[];
+  requirements?: Array<{
+    id?: string;
+    original_text?: string;
+    type?: string;
+    mandatory?: boolean;
+    match_mode?: "HARD" | "SOFT";
+    canonical_value?: string | null;
+    equivalent_terms?: string[];
+    confidence?: number | null;
+    temporal_window_months?: number | null;
+  }>;
+  assumptions?: string[];
   exclusions?: unknown[];
 };
 
 type SearchResponse = {
   route: string;
+  search_id?: string;
+  suggested_query?: string | null;
+  search_specification?: Record<string, unknown>;
   parsed: RoutingPacket;
-  results: BackendCandidate[];
+  results: Candidate[];
   message?: string | null;
   valid?: boolean;
   errors?: string[];
+};
+
+type BackendSearchResponse = Omit<SearchResponse, "results"> & {
+  results: BackendCandidate[];
 };
 
 function getInitials(name: string): string {
@@ -107,26 +212,6 @@ function getInitials(name: string): string {
   }
 
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-}
-
-function formatDate(
-  dateString?: string | null
-): string {
-  if (!dateString) {
-    return "Unknown";
-  }
-
-  const date = new Date(dateString);
-
-  if (Number.isNaN(date.getTime())) {
-    return dateString;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
 }
 
 function formatMonths(
@@ -152,6 +237,94 @@ function formatMonths(
   }
 
   return `${years}y ${remainingMonths}m`;
+}
+
+function formatTimelineDate(dateString?: string | null): string {
+  if (!dateString) return "Date not listed";
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return dateString;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
+function normalizeExternalUrl(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+
+  const candidate = /^[a-z][a-z\d+.-]*:/i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function groupMatchedRequirements(
+  matches: MatchedRequirement[]
+): MatchedRequirement[] {
+  const grouped = new Map<string, MatchedRequirement>();
+  for (const match of matches) {
+    const key = match.requirement.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        ...match,
+        requirement_types: [match.type.toLowerCase()],
+        evidence: [...(match.evidence ?? [])],
+      });
+      continue;
+    }
+    existing.requirement_types = [...new Set([
+      ...(existing.requirement_types ?? [existing.type.toLowerCase()]),
+      match.type.toLowerCase(),
+    ])];
+    if (match.type.toLowerCase() === "skill") {
+      existing.type = "skill";
+      existing.candidate_value = match.candidate_value ?? existing.candidate_value;
+    }
+    existing.matched = existing.matched && match.matched;
+    existing.evidence = [...(existing.evidence ?? []), ...(match.evidence ?? [])];
+    if (existing.candidate_value == null && match.candidate_value != null) {
+      existing.candidate_value = match.candidate_value;
+    }
+  }
+  return [...grouped.values()];
+}
+
+function conciseEvidenceText(text: string, requirement: string): string {
+  const sentences = text
+    .split(/\r?\n+|(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  if (sentences.length <= 1) return text;
+
+  const terms = requirement.toLowerCase().match(/[a-z0-9+#.]+/g) ?? [];
+  const ranked = sentences.map((sentence) => {
+    const lower = sentence.toLowerCase();
+    const score = terms.filter((term) => lower.includes(term)).length;
+    return { sentence, score };
+  }).sort((left, right) => right.score - left.score || left.sentence.length - right.sentence.length);
+  const best = ranked.find((item) => item.score > 0)?.sentence ?? sentences[0];
+  return best.length > 360 ? `${best.slice(0, 357).trimEnd()}…` : best;
+}
+
+function evidenceSectionLabel(evidence: Evidence): string {
+  const type = (evidence.section_type || evidence.evidence_type || "").trim().toLowerCase();
+  if (type.includes("project")) return "Project";
+  if (type.includes("experience") || type.includes("work")) return "Experience";
+  if (type.includes("summary") || type.includes("profile")) return "Summary";
+  if (type.includes("education")) return "Education";
+  if (type.includes("skill")) return "Skills";
+  if (evidence.section_title?.trim()) return evidence.section_title.trim();
+  return "Resume section";
 }
 
 function normalizeCandidate(
@@ -205,15 +378,14 @@ function normalizeCandidate(
       : [];
 
   const matchedSkills: MatchedSkill[] =
-    rawMatchedSkills
-      .map((item) => {
+    rawMatchedSkills.flatMap((item): MatchedSkill[] => {
         if (typeof item === "string") {
           const isPrimarySkill =
             raw.skill &&
             item.toLowerCase() ===
               raw.skill.toLowerCase();
 
-          return {
+          return [{
             skill: item,
             last_used: isPrimarySkill
               ? raw.last_used_date ??
@@ -224,7 +396,7 @@ function normalizeCandidate(
               ? raw.total_months ??
                 undefined
               : undefined,
-          };
+          }];
         }
 
         if (
@@ -232,10 +404,10 @@ function normalizeCandidate(
           typeof item !== "object" ||
           !item.skill
         ) {
-          return null;
+          return [];
         }
 
-        return {
+        return [{
           skill: item.skill,
           last_used:
             item.last_used_date ??
@@ -243,12 +415,8 @@ function normalizeCandidate(
             null,
           total_months:
             item.total_months,
-        };
-      })
-      .filter(
-        (item): item is MatchedSkill =>
-          item !== null
-      );
+        }];
+      });
 
   /*
    * Some structured responses expose only the primary
@@ -288,42 +456,90 @@ function normalizeCandidate(
     id: Number(id),
     name,
     email,
+    phone: raw.phone ?? nestedCandidate.phone ?? null,
     score: Number(score),
+    headline: raw.headline ?? nestedCandidate.headline ?? null,
+    location: raw.location ?? nestedCandidate.location ?? null,
+    summary: raw.summary ?? nestedCandidate.summary ?? null,
+    total_experience_months:
+      raw.total_experience_months ??
+      nestedCandidate.total_experience_months,
+    experience_timeline: Array.isArray(raw.experience_timeline)
+      ? raw.experience_timeline
+      : [],
+    education: Array.isArray(raw.education) ? raw.education : [],
+    profile_skills: Array.isArray(raw.profile_skills) ? raw.profile_skills : matchedSkills.map((item) => item.skill),
+    projects: Array.isArray(raw.projects) ? raw.projects : [],
+    linkedin_url: raw.linkedin_url ?? null,
+    github_url: raw.github_url ?? null,
+    portfolio_url: raw.portfolio_url ?? null,
     matched_skills: matchedSkills,
     evidence,
+    matched_requirements: Array.isArray(raw.matched_requirements)
+      ? raw.matched_requirements
+      : [],
+    explanation: Array.isArray(raw.explanation)
+      ? raw.explanation.filter((item): item is string => typeof item === "string")
+      : [],
     match_status:
       raw.match_status,
   };
 }
 
-function getMatchClass(
-  score: number
-): string {
-  if (score >= 80) {
-    return "strong";
-  }
-
-  if (score >= 60) {
-    return "medium";
-  }
-
-  return "weak";
-}
-
 function App() {
   const [query, setQuery] = useState("");
+  const [suggestedQuery, setSuggestedQuery] = useState<string | null>(null);
   const [data, setData] =
     useState<SearchResponse | null>(null);
   const [loading, setLoading] =
     useState(false);
+  const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "offline">("checking");
   const [searchTime, setSearchTime] =
     useState<number | null>(null);
   const [error, setError] =
     useState<string | null>(null);
+  const [selectedProfile, setSelectedProfile] = useState<Candidate | null>(null);
+  const [profileTab, setProfileTab] = useState<"overview" | "experience" | "projects" | "education" | "skills">("overview");
 
-  async function handleSearch() {
+  function openProfile(candidate: Candidate) {
+    console.info("[GenieHire] Candidate profile opened", {
+      candidateId: candidate.id,
+      experienceEntries: candidate.experience_timeline.length,
+      educationEntries: candidate.education.length,
+      skills: candidate.profile_skills.length,
+      projects: candidate.projects.length,
+    });
+    setSelectedProfile(candidate);
+    setProfileTab("overview");
+  }
+
+  useEffect(() => {
+    if (!selectedProfile) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedProfile(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [selectedProfile]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("http://127.0.0.1:8000/health", { signal: controller.signal })
+      .then((response) => setApiStatus(response.ok ? "connected" : "offline"))
+      .catch(() => {
+        if (!controller.signal.aborted) setApiStatus("offline");
+      });
+    return () => controller.abort();
+  }, []);
+
+  async function handleSearch(searchText = query) {
     if (
-      !query.trim() ||
+      !searchText.trim() ||
       loading
     ) {
       return;
@@ -331,11 +547,19 @@ function App() {
 
     setData(null);
     setError(null);
+    setSuggestedQuery(null);
     setSearchTime(null);
     setLoading(true);
 
     const startTime =
       performance.now();
+    const controller = new AbortController();
+    // Allow the parser and first-use reranker model to finish on slower
+    // machines while keeping a hard stop for genuinely stalled requests.
+    const timeoutId = window.setTimeout(() => controller.abort(), 90000);
+    console.info("[GenieHire] Search started", {
+      queryChars: searchText.trim().length,
+    });
 
     try {
       const res = await fetch(
@@ -346,11 +570,13 @@ function App() {
             "Content-Type":
               "application/json",
           },
+          signal: controller.signal,
           body: JSON.stringify({
-            query: query.trim(),
+            query: searchText.trim(),
           }),
         }
       );
+      setApiStatus("connected");
 
       if (!res.ok) {
         throw new Error(
@@ -358,8 +584,9 @@ function App() {
         );
       }
 
-      const response: SearchResponse =
+      const response: BackendSearchResponse =
         await res.json();
+      setSuggestedQuery(response.suggested_query ?? null);
 
       const endTime =
         performance.now();
@@ -372,6 +599,12 @@ function App() {
           ).toFixed(3)
         )
       );
+      console.info("[GenieHire] Search response received", {
+        searchId: response.search_id,
+        route: response.route,
+        candidates: Array.isArray(response.results) ? response.results.length : 0,
+        durationSeconds: ((endTime - startTime) / 1000).toFixed(3),
+      });
 
       if (
         response.valid === false
@@ -417,7 +650,7 @@ function App() {
                 (
                   candidate
                 ): candidate is Candidate =>
-                  candidate !== null
+                  candidate !== null && candidate.match_status !== "NO_MATCH"
               )
           : [];
 
@@ -429,6 +662,7 @@ function App() {
     } catch (e) {
       const endTime =
         performance.now();
+      if (e instanceof TypeError) setApiStatus("offline");
 
       setSearchTime(
         Number(
@@ -440,13 +674,20 @@ function App() {
       );
 
       setError(
-        e instanceof Error
-          ? e.message
-          : "Something went wrong. Is the backend running?"
+        e instanceof DOMException && e.name === "AbortError"
+          ? "Search is taking longer than expected. Please try again shortly."
+          : e instanceof Error
+            ? e.message
+            : "Something went wrong. Is the backend running?"
       );
+      console.warn("[GenieHire] Search failed", {
+        durationSeconds: ((endTime - startTime) / 1000).toFixed(3),
+        error: e instanceof Error ? e.message : "Unknown error",
+      });
 
       setData(null);
     } finally {
+      window.clearTimeout(timeoutId);
       setLoading(false);
     }
   }
@@ -454,6 +695,7 @@ function App() {
   async function handleViewResume(
     candidateId: number
   ) {
+    console.info("[GenieHire] Resume request started", { candidateId });
     try {
       const response =
         await fetch(
@@ -476,7 +718,12 @@ function App() {
         "_blank",
         "noopener,noreferrer"
       );
+      console.info("[GenieHire] Resume opened", { candidateId });
     } catch (e) {
+      console.error("[GenieHire] Resume request failed", {
+        candidateId,
+        error: e instanceof Error ? e.message : "Unknown error",
+      });
       setError(
         e instanceof Error
           ? e.message
@@ -488,9 +735,23 @@ function App() {
   const requirements =
     data?.parsed
       ?.structured_requirements;
-
+  const semanticCriteriaRaw = data?.parsed.requirements
+    ?.filter((item) => item.type?.toUpperCase() === "SEMANTIC" && item.mandatory !== false)
+    .map((item) => item.original_text?.trim())
+    .filter((item): item is string => Boolean(item))
+    ?? data?.parsed.semantic_requirements
+    ?? (data?.parsed.semantic_requirement ? [data.parsed.semantic_requirement] : []);
+  const semanticCriteria = [...new Map(
+    semanticCriteriaRaw.map((item) => [item.trim().toLocaleLowerCase(), item.trim()])
+  ).values()];
+  const temporalCriteria = data?.parsed.requirements?.filter(
+    (item) => item.type?.toUpperCase() === "TEMPORAL" && item.temporal_window_months != null,
+  ) ?? [];
   const resultCount =
     data?.results.length ?? 0;
+  const profileLinkedInUrl = normalizeExternalUrl(selectedProfile?.linkedin_url);
+  const profileGitHubUrl = normalizeExternalUrl(selectedProfile?.github_url);
+  const profilePortfolioUrl = normalizeExternalUrl(selectedProfile?.portfolio_url);
 
   return (
     <div className="app-shell">
@@ -511,9 +772,9 @@ function App() {
           </div>
         </div>
 
-        <div className="topbar-status">
+        <div className={`topbar-status is-${apiStatus}`} role="status" aria-live="polite">
           <span className="status-dot" />
-          Talent database connected
+          {apiStatus === "checking" ? "Checking database…" : apiStatus === "connected" ? "Talent database connected" : "Database unavailable"}
         </div>
       </header>
 
@@ -536,7 +797,13 @@ function App() {
             need.
           </p>
 
-          <div className="search-container">
+          <form
+            className="search-container"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleSearch();
+            }}
+          >
             <div className="search-icon">
               <svg
                 viewBox="0 0 24 24"
@@ -559,20 +826,13 @@ function App() {
                   e.target.value
                 )
               }
-              onKeyDown={(e) => {
-                if (
-                  e.key === "Enter"
-                ) {
-                  handleSearch();
-                }
-              }}
               placeholder="e.g. Find Python developers with 5+ years of experience"
               aria-label="Candidate search"
             />
 
             <button
+              type="submit"
               className="search-button"
-              onClick={handleSearch}
               disabled={
                 loading ||
                 !query.trim()
@@ -592,7 +852,23 @@ function App() {
                 </>
               )}
             </button>
-          </div>
+          </form>
+
+          {suggestedQuery && (
+            <div className="spelling-suggestion">
+              Did you mean{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery(suggestedQuery);
+                  void handleSearch(suggestedQuery);
+                }}
+              >
+                {suggestedQuery}
+              </button>
+              ?
+            </div>
+          )}
 
           <div className="search-examples">
             <span>Try:</span>
@@ -626,6 +902,23 @@ function App() {
             >
               React + Node.js
             </button>
+
+            <button
+              onClick={() =>
+                setQuery(
+                  "Find Python developers in Pune with 3+ years who have built AI products"
+                )
+              }
+            >
+              Python + AI + Pune
+            </button>
+          </div>
+
+          <div className="search-capabilities" aria-label="Search supports">
+            <span>Search across</span>
+            <span>Roles and skills</span>
+            <span>Projects and work history</span>
+            <span>Location and experience</span>
           </div>
         </section>
 
@@ -711,7 +1004,8 @@ function App() {
                 </div>
               </div>
 
-              <div className="requirement-bar">
+              <div className="requirement-bar" aria-label="Interpreted search criteria">
+                <span className="criteria-heading">Search criteria</span>
                 {requirements?.skills?.map(
                   (skill) => (
                     <span
@@ -723,41 +1017,60 @@ function App() {
                   )
                 )}
 
-                {requirements?.experience_min_years !==
-                  null &&
-                  requirements?.experience_min_years !==
-                    undefined && (
+                {(requirements?.experience_min_years != null || requirements?.experience_max_years != null) && (
                     <span className="requirement-pill">
-                      {
-                        requirements.experience_min_years
-                      }
-                      + years experience
+                      {requirements.experience_min_years != null && requirements.experience_max_years != null
+                        ? `${requirements.experience_min_years}–${requirements.experience_max_years} years experience`
+                        : requirements.experience_min_years != null
+                          ? `${requirements.experience_min_years}+ years experience`
+                          : `Up to ${requirements.experience_max_years} years experience`}
                     </span>
                   )}
 
-                {requirements?.recency_months ? (
-                  <span className="requirement-pill">
-                    Active in last{" "}
-                    {
-                      requirements.recency_months
-                    }{" "}
-                    months
-                  </span>
-                ) : null}
+                {requirements?.relevant_experience_min_years !== null &&
+                  requirements?.relevant_experience_min_years !== undefined && (
+                    <span className="requirement-pill">
+                      {requirements.relevant_experience_min_years}+ years relevant experience
+                    </span>
+                  )}
 
-                {requirements?.role && (
+                {temporalCriteria.map((item, index) => {
+                  const months = item.temporal_window_months!;
+                  const inferred = (item.confidence ?? 1) < 0.75;
+                  return (
+                    <span className="requirement-pill" key={`temporal-${item.id ?? index}`}>
+                      Recent activity · {inferred ? "assumed " : "last "}{months} {months === 1 ? "month" : "months"}
+                    </span>
+                  );
+                })}
+
+                {(requirements?.roles ?? (requirements?.role ? [requirements.role] : [])).map((role) => (
+                  <span className="requirement-pill" key={`role-${role}`}>{role}</span>
+                ))}
+
+                {requirements?.companies?.map((company) => (
+                  <span className="requirement-pill" key={`company-${company}`}>{company}</span>
+                ))}
+
+                {requirements?.location && (
                   <span className="requirement-pill">
-                    {requirements.role}
+                    {requirements.location}
                   </span>
                 )}
 
-                {data.parsed
-                  .semantic_requirement && (
-                  <span className="requirement-pill semantic-pill">
-                    Semantic search
-                  </span>
-                )}
+                {semanticCriteria.map((semantic) => (
+                  <span className="requirement-pill semantic-pill" key={`semantic-${semantic}`}>{semantic}</span>
+                ))}
               </div>
+
+              {data.parsed.assumptions && data.parsed.assumptions.length > 0 && (
+                <div className="assumption-info">
+                  <strong>Search assumptions</strong>
+                  {data.parsed.assumptions.map((assumption) => (
+                    <span key={assumption}>{assumption}</span>
+                  ))}
+                </div>
+              )}
 
               {data.message && (
                 <div className="result-message">
@@ -791,17 +1104,10 @@ function App() {
                 <div className="candidate-list">
                   {data.results.map(
                     (candidate) => {
-                      const matchScore =
-                        Math.max(
-                          0,
-                          Math.min(
-                            100,
-                            Number(
-                              candidate.score
-                            ) || 0
-                          )
-                        );
-
+                      const shownProofs = new Set<string>();
+                      const displayedRequirements = groupMatchedRequirements(
+                        candidate.matched_requirements
+                      );
                       return (
                         <article
                           className="candidate-card"
@@ -823,21 +1129,12 @@ function App() {
                                     candidate.name
                                   }
                                 </h3>
-
-                                <span
-                                  className={`match-badge ${getMatchClass(
-                                    matchScore
-                                  )}`}
-                                >
-                                  <span>
-                                    ✓
+                                {candidate.match_status && candidate.match_status !== "NO_MATCH" && (
+                                  <span className={`candidate-match-status ${candidate.match_status === "PARTIAL_MATCH" ? "partial" : "complete"}`}>
+                                    {candidate.match_status === "PARTIAL_MATCH" ? "Partial match" : "Match"}
                                   </span>
+                                )}
 
-                                  {matchScore.toFixed(
-                                    1
-                                  )}
-                                  % Match
-                                </span>
                               </div>
 
                               {candidate.email && (
@@ -848,103 +1145,97 @@ function App() {
                                 </div>
                               )}
 
-                              {candidate
-                                .matched_skills
-                                .length >
-                                0 && (
-                                <div className="skill-list">
-                                  {candidate.matched_skills.map(
-                                    (
-                                      skill,
-                                      index
-                                    ) => (
-                                      <div
-                                        className="skill-item"
-                                        key={`${skill.skill}-${index}`}
-                                      >
-                                        <span className="skill-name">
-                                          {
-                                            skill.skill
-                                          }
-                                        </span>
-
-                                        {skill.total_months !== undefined &&
-                                          skill.total_months !== null && (
-                                          <span className="skill-detail">
-                                            {formatMonths(
-                                              skill.total_months
-                                            )}
-                                          </span>
-                                        )}
-
-                                        {skill.last_used && (
-                                          <span className="skill-detail">
-                                            Last used{" "}
-                                            {formatDate(
-                                              skill.last_used
-                                            )}
-                                          </span>
-                                        )}
-                                      </div>
-                                    )
-                                  )}
+                              {candidate.location && (
+                                <div className="candidate-email">
+                                  {candidate.location}
                                 </div>
                               )}
 
-                              {candidate
-                                .evidence
-                                .length >
-                                0 && (
+                              {(candidate.headline ||
+                                candidate.total_experience_months !== undefined) && (
+                                <div className="candidate-email">
+                                  {candidate.headline}
+                                  {candidate.headline &&
+                                    candidate.total_experience_months !== undefined &&
+                                    " · "}
+                                  {candidate.total_experience_months !== undefined &&
+                                    `${formatMonths(candidate.total_experience_months)} experience`}
+                                </div>
+                              )}
+
+                              {displayedRequirements.some((match) => match.matched) && (
                                 <div className="evidence-preview">
-                                  <div className="evidence-label">
-                                    Why they match
-                                  </div>
-
-                                  <p>
-                                    {
-                                      candidate
-                                        .evidence[0]
-                                        .text
-                                    }
-                                  </p>
+                                  <div className="evidence-label">Why this candidate matches</div>
+                                  {displayedRequirements
+                                    .filter((match) => match.matched)
+                                    .map((match, index) => {
+                                      const proofs = (match.evidence ?? [])
+                                        .filter((item) => item.text?.trim())
+                                        .filter((item) => !(
+                                          match.requirement_types?.includes("skill") &&
+                                          ["skill", "skills"].includes((item.evidence_type ?? "").toLowerCase())
+                                        ))
+                                        .filter((item) => {
+                                          const key = `${item.experience_id ?? item.source_id ?? item.evidence_id ?? ""}:${item.text}`;
+                                          if (shownProofs.has(key)) return false;
+                                          shownProofs.add(key);
+                                          return true;
+                                        });
+                                      const visibleProofs = proofs.slice(0, 1);
+                                      return (
+                                        <div className="evidence-snippet" key={`${match.type}-${match.requirement}-${index}`}>
+                                          <div className="evidence-snippet-meta">
+                                            <span className="evidence-skill-tag">
+                                              {match.type === "relevant_experience" ? "Relevant experience" : match.requirement}
+                                            </span>
+                                            {match.type !== "skill" && match.candidate_value !== undefined &&
+                                              match.candidate_value !== null &&
+                                              String(match.candidate_value).trim().toLowerCase() !== match.requirement.trim().toLowerCase() && (
+                                              <span className="evidence-source">{String(match.candidate_value)}</span>
+                                            )}
+                                          </div>
+                                          <div className="evidence-proof">
+                                            {visibleProofs.map((proof, proofIndex) => (
+                                              <p key={`${proof.source_id ?? proofIndex}`}>
+                                                {proof.source ? (
+                                                  <>
+                                                    <strong>{evidenceSectionLabel(proof)} · {proof.source}: </strong>
+                                                    {conciseEvidenceText(proof.text ?? "", match.requirement)}
+                                                  </>
+                                                ) : (
+                                                  <>
+                                                    <strong>{evidenceSectionLabel(proof)}: </strong>
+                                                    {conciseEvidenceText(proof.text ?? "", match.requirement)}
+                                                  </>
+                                                )}
+                                              </p>
+                                            ))}
+                                            {visibleProofs.length === 0 && (
+                                              <p className="evidence-fallback">
+                                                {match.type === "relevant_experience"
+                                                  ? "Supporting activity appears in these dated roles; exact activity dates were not listed."
+                                                  : match.type === "skill"
+                                                    ? "Listed as a skill on the candidate profile; no supporting project or experience excerpt was available."
+                                                    : match.candidate_value != null
+                                                      ? `Candidate profile lists: ${match.candidate_value}`
+                                                    : "Matched against structured candidate profile data."}
+                                              </p>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
                                 </div>
                               )}
-
-                              {candidate
-                                .evidence
-                                .length ===
-                                0 &&
-                                candidate
-                                  .matched_skills
-                                  .length ===
-                                  0 && (
-                                  <div className="evidence-preview">
-                                    <div className="evidence-label">
-                                      Match
-                                    </div>
-
-                                    <p>
-                                      This candidate
-                                      matched the
-                                      requested
-                                      search
-                                      requirements.
-                                    </p>
-                                  </div>
-                                )}
                             </div>
                           </div>
 
                           <div className="candidate-actions">
                             <button
                               className="resume-button"
-                              onClick={() =>
-                                handleViewResume(
-                                  candidate.id
-                                )
-                              }
+                              onClick={() => openProfile(candidate)}
                             >
-                              View Resume
+                              View profile
                               <span>
                                 ↗
                               </span>
@@ -966,16 +1257,123 @@ function App() {
                   </h3>
 
                   <p>
-                    Try changing your
-                    search criteria or
-                    using broader
-                    requirements.
+                    {requirements?.relevant_experience_min_years &&
+                    data.parsed.semantic_requirement
+                      ? `No candidates had at least ${requirements.relevant_experience_min_years} years of dated experience supporting “${data.parsed.semantic_requirement}”. Try lowering the relevant-experience requirement or broadening the activity.`
+                      : "Try changing your search criteria or using broader requirements."}
                   </p>
                 </div>
               )}
             </section>
           )}
       </main>
+
+      {selectedProfile && (
+        <div className="profile-backdrop" onMouseDown={() => setSelectedProfile(null)}>
+          <aside
+            className="profile-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="profile-name"
+            onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setSelectedProfile(null);
+            }}
+          >
+            <div className="profile-panel-topbar">
+              <span>Candidate profile</span>
+              <button className="profile-close" onClick={() => setSelectedProfile(null)} aria-label="Close profile">×</button>
+            </div>
+            <header className="profile-header">
+              <div className="avatar">{getInitials(selectedProfile.name)}</div>
+              <div className="profile-heading">
+                <h2 id="profile-name">{selectedProfile.name}</h2>
+                {selectedProfile.headline && <p>{selectedProfile.headline}</p>}
+                {selectedProfile.location && <p>{selectedProfile.location}</p>}
+              </div>
+            </header>
+            <div className="profile-links">
+              {profileLinkedInUrl && <a href={profileLinkedInUrl} target="_blank" rel="noopener noreferrer">LinkedIn ↗</a>}
+              {profileGitHubUrl && <a href={profileGitHubUrl} target="_blank" rel="noopener noreferrer">GitHub ↗</a>}
+              {profilePortfolioUrl && <a href={profilePortfolioUrl} target="_blank" rel="noopener noreferrer">Portfolio ↗</a>}
+              <button className="profile-resume-button" onClick={() => void handleViewResume(selectedProfile.id)}>View resume ↗</button>
+            </div>
+            <nav className="profile-tabs" aria-label="Candidate profile sections">
+              {(["overview", "experience", "projects", "education", "skills"] as const).map((tab) => (
+                <button key={tab} className={profileTab === tab ? "active" : ""} onClick={() => setProfileTab(tab)}>
+                  {tab[0].toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </nav>
+            <div className="profile-content">
+              {profileTab === "overview" && (
+                <>
+                  <section className="profile-section">
+                    <h3>Contact</h3>
+                    {selectedProfile.email && <p><span>Email</span><a href={`mailto:${selectedProfile.email}`}>{selectedProfile.email}</a></p>}
+                    {selectedProfile.phone && <p><span>Phone</span><a href={`tel:${selectedProfile.phone}`}>{selectedProfile.phone}</a></p>}
+                    {!selectedProfile.email && !selectedProfile.phone && <p className="profile-muted">No contact details available.</p>}
+                  </section>
+                  {selectedProfile.summary && <section className="profile-section"><h3>Summary</h3><p className="profile-summary">{selectedProfile.summary}</p></section>}
+                  <section className="profile-section">
+                    <h3>Search match</h3>
+                    {selectedProfile.matched_requirements.filter((item) => item.matched).map((item, index) => (
+                      <div className="profile-match" key={`${item.requirement}-${index}`}>
+                        <span>{item.requirement}</span>
+                        <p>{item.evidence?.find((proof) => proof.text)?.text ?? item.candidate_value ?? "Matched candidate profile"}</p>
+                      </div>
+                    ))}
+                  </section>
+                </>
+              )}
+              {profileTab === "experience" && (
+                <section className="profile-section">
+                  <h3>Experience{selectedProfile.total_experience_months !== undefined ? ` · ${formatMonths(selectedProfile.total_experience_months)} total` : ""}</h3>
+                  {selectedProfile.experience_timeline.length ? selectedProfile.experience_timeline.map((item, index) => (
+                    <article className="profile-entry" key={`${item.role}-${item.company}-${index}`}>
+                      <strong>{item.role ?? "Role not listed"}</strong>
+                      <p>{item.company ?? "Company not listed"}</p>
+                      <span>{formatTimelineDate(item.start_date)} – {item.is_current ? "Present" : formatTimelineDate(item.end_date)}</span>
+                      {item.description && <p className="profile-entry-description">{item.description}</p>}
+                    </article>
+                  )) : <p className="profile-muted">No experience history available.</p>}
+                </section>
+              )}
+              {profileTab === "projects" && (
+                <section className="profile-section">
+                  <h3>Projects</h3>
+                  {selectedProfile.projects.length ? selectedProfile.projects.map((project, index) => (
+                    <article className="profile-entry" key={`${project.title}-${index}`}>
+                      <strong>{project.title}</strong>
+                      {project.description && <p className="profile-entry-description">{project.description}</p>}
+                      {project.skills && project.skills.length > 0 && <div className="profile-entry-skills">{project.skills.map((skill) => <span key={skill}>{skill}</span>)}</div>}
+                      {project.url && normalizeExternalUrl(project.url) && <a className="profile-project-link" href={normalizeExternalUrl(project.url) ?? undefined} target="_blank" rel="noopener noreferrer">Open project ↗</a>}
+                    </article>
+                  )) : <p className="profile-muted">No project details available.</p>}
+                </section>
+              )}
+              {profileTab === "education" && (
+                <section className="profile-section">
+                  <h3>Education</h3>
+                  {selectedProfile.education.length ? selectedProfile.education.map((item, index) => (
+                    <article className="profile-entry" key={`${item.institution}-${item.degree}-${index}`}>
+                      <strong>{item.degree ?? item.field_of_study ?? "Education"}</strong>
+                      <p>{item.institution ?? "Institution not listed"}</p>
+                      {(item.start_date || item.end_date) && <span>{formatTimelineDate(item.start_date)} – {formatTimelineDate(item.end_date)}</span>}
+                    </article>
+                  )) : <p className="profile-muted">No education history available.</p>}
+                </section>
+              )}
+              {profileTab === "skills" && (
+                <section className="profile-section">
+                  <h3>Skills</h3>
+                  {selectedProfile.profile_skills.length ? <div className="profile-skill-list">{selectedProfile.profile_skills.map((skill) => <span key={skill}>{skill}</span>)}</div> : <p className="profile-muted">No skills available.</p>}
+                </section>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
     </div>
   );
 }
