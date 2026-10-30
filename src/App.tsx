@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 const API_URL = "http://127.0.0.1:8000/search";
+const SPELLING_CHECK_URL = "http://127.0.0.1:8000/search/suggestion";
 const RESUME_API_URL = "http://127.0.0.1:8000/candidates";
 
 type MatchedSkill = {
@@ -267,6 +268,38 @@ function normalizeExternalUrl(value?: string | null): string | null {
   }
 }
 
+type SeniorityBand = "Entry" | "Mid" | "Senior" | "Not specified";
+
+const SENIORITY_BANDS: SeniorityBand[] = [
+  "Entry",
+  "Mid",
+  "Senior",
+  "Not specified",
+];
+
+function candidateSeniority(candidate: Candidate): SeniorityBand {
+  const months = candidate.total_experience_months;
+  if (months === undefined || months === null) return "Not specified";
+  if (months < 36) return "Entry";
+  if (months < 96) return "Mid";
+  return "Senior";
+}
+
+function candidateRoleValues(candidate: Candidate): string[] {
+  const primaryRole =
+    candidate.experience_timeline.find((item) => item.is_current)?.role ??
+    candidate.experience_timeline[0]?.role ??
+    candidate.headline;
+  return primaryRole?.trim() ? [primaryRole.trim()] : [];
+}
+
+function candidateSkillValues(candidate: Candidate): string[] {
+  return [...new Set([
+    ...candidate.profile_skills,
+    ...candidate.matched_skills.map((item) => item.skill),
+  ].map((skill) => skill.trim()).filter(Boolean))];
+}
+
 function groupMatchedRequirements(
   matches: MatchedRequirement[]
 ): MatchedRequirement[] {
@@ -493,6 +526,7 @@ function App() {
     useState<SearchResponse | null>(null);
   const [loading, setLoading] =
     useState(false);
+  const [searchPhase, setSearchPhase] = useState<"checking" | "searching">("checking");
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "offline">("checking");
   const [searchTime, setSearchTime] =
     useState<number | null>(null);
@@ -500,6 +534,15 @@ function App() {
     useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<Candidate | null>(null);
   const [profileTab, setProfileTab] = useState<"overview" | "experience" | "projects" | "education" | "skills">("overview");
+  const [selectedRoleFilters, setSelectedRoleFilters] = useState<string[]>([]);
+  const [selectedSkillFilters, setSelectedSkillFilters] = useState<string[]>([]);
+  const [selectedSeniorityFilters, setSelectedSeniorityFilters] = useState<SeniorityBand[]>([]);
+  const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
+  const [roleFilterSearch, setRoleFilterSearch] = useState("");
+  const [skillDropdownOpen, setSkillDropdownOpen] = useState(false);
+  const [skillFilterSearch, setSkillFilterSearch] = useState("");
+  const roleDropdownRef = useRef<HTMLDivElement | null>(null);
+  const skillDropdownRef = useRef<HTMLDivElement | null>(null);
 
   function openProfile(candidate: Candidate) {
     console.info("[GenieHire] Candidate profile opened", {
@@ -528,6 +571,32 @@ function App() {
   }, [selectedProfile]);
 
   useEffect(() => {
+    if (!roleDropdownOpen && !skillDropdownOpen) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        !roleDropdownRef.current?.contains(target) &&
+        !skillDropdownRef.current?.contains(target)
+      ) {
+        setRoleDropdownOpen(false);
+        setSkillDropdownOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setRoleDropdownOpen(false);
+        setSkillDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [roleDropdownOpen, skillDropdownOpen]);
+
+  useEffect(() => {
     const controller = new AbortController();
     fetch("http://127.0.0.1:8000/health", { signal: controller.signal })
       .then((response) => setApiStatus(response.ok ? "connected" : "offline"))
@@ -537,7 +606,7 @@ function App() {
     return () => controller.abort();
   }, []);
 
-  async function handleSearch(searchText = query) {
+  async function handleSearch(searchText = query, skipSpellingCheck = false) {
     if (
       !searchText.trim() ||
       loading
@@ -549,7 +618,15 @@ function App() {
     setError(null);
     setSuggestedQuery(null);
     setSearchTime(null);
+    setSelectedRoleFilters([]);
+    setSelectedSkillFilters([]);
+    setSelectedSeniorityFilters([]);
+    setRoleDropdownOpen(false);
+    setRoleFilterSearch("");
+    setSkillDropdownOpen(false);
+    setSkillFilterSearch("");
     setLoading(true);
+    setSearchPhase(skipSpellingCheck ? "searching" : "checking");
 
     const startTime =
       performance.now();
@@ -562,6 +639,26 @@ function App() {
     });
 
     try {
+      if (!skipSpellingCheck) {
+        const spellingResponse = await fetch(SPELLING_CHECK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ query: searchText.trim() }),
+        });
+        if (!spellingResponse.ok) {
+          throw new Error(`Spelling check failed (${spellingResponse.status})`);
+        }
+        const spellingResult: { suggested_query?: string | null } = await spellingResponse.json();
+        const correction = spellingResult.suggested_query?.trim();
+        if (correction && correction.toLocaleLowerCase() !== searchText.trim().toLocaleLowerCase()) {
+          setSuggestedQuery(correction);
+          return;
+        }
+      }
+
+      setSuggestedQuery(null);
+      setSearchPhase("searching");
       const res = await fetch(
         API_URL,
         {
@@ -586,7 +683,6 @@ function App() {
 
       const response: BackendSearchResponse =
         await res.json();
-      setSuggestedQuery(response.suggested_query ?? null);
 
       const endTime =
         performance.now();
@@ -749,12 +845,47 @@ function App() {
   ) ?? [];
   const resultCount =
     data?.results.length ?? 0;
+  const availableRoles = [...new Map(
+    (data?.results ?? [])
+      .flatMap(candidateRoleValues)
+      .map((role) => [role.toLocaleLowerCase(), role] as const)
+  ).values()].sort((left, right) => left.localeCompare(right));
+  const visibleRoleOptions = availableRoles.filter((role) =>
+    roleFilterSearch.trim().length >= 2 &&
+    role.toLocaleLowerCase().includes(roleFilterSearch.trim().toLocaleLowerCase())
+  );
+  const availableSkills = [...new Map(
+    (data?.results ?? [])
+      .flatMap(candidateSkillValues)
+      .map((skill) => [skill.toLocaleLowerCase(), skill] as const)
+  ).values()].sort((left, right) => left.localeCompare(right));
+  const visibleSkillOptions = availableSkills.filter((skill) =>
+    skill.toLocaleLowerCase().includes(skillFilterSearch.trim().toLocaleLowerCase())
+  );
+  const availableSeniority = SENIORITY_BANDS.filter((band) =>
+    (data?.results ?? []).some((candidate) => candidateSeniority(candidate) === band)
+  );
+  const hasActiveFilters = Boolean(
+    selectedRoleFilters.length || selectedSkillFilters.length || selectedSeniorityFilters.length
+  );
+  const filteredResults = (data?.results ?? []).filter((candidate) => {
+    const candidateRoles = candidateRoleValues(candidate).map((value) => value.toLocaleLowerCase());
+    const candidateSkills = candidateSkillValues(candidate).map((value) => value.toLocaleLowerCase());
+    const roleMatches = !selectedRoleFilters.length || selectedRoleFilters.some((role) =>
+      candidateRoles.includes(role.toLocaleLowerCase())
+    );
+    const skillMatches = !selectedSkillFilters.length || selectedSkillFilters.some((skill) =>
+      candidateSkills.includes(skill.toLocaleLowerCase())
+    );
+    const seniorityMatches = !selectedSeniorityFilters.length || selectedSeniorityFilters.includes(candidateSeniority(candidate));
+    return roleMatches && skillMatches && seniorityMatches;
+  });
   const profileLinkedInUrl = normalizeExternalUrl(selectedProfile?.linkedin_url);
   const profileGitHubUrl = normalizeExternalUrl(selectedProfile?.github_url);
   const profilePortfolioUrl = normalizeExternalUrl(selectedProfile?.portfolio_url);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${data && !loading ? " has-search-results" : ""}`}>
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">
@@ -822,9 +953,10 @@ function App() {
             <input
               value={query}
               onChange={(e) =>
-                setQuery(
-                  e.target.value
-                )
+                {
+                  setQuery(e.target.value);
+                  setSuggestedQuery(null);
+                }
               }
               placeholder="e.g. Find Python developers with 5+ years of experience"
               aria-label="Candidate search"
@@ -856,17 +988,24 @@ function App() {
 
           {suggestedQuery && (
             <div className="spelling-suggestion">
-              Did you mean{" "}
+              <span>Check this spelling before searching:</span>
               <button
+                className="spelling-suggestion-correction"
                 type="button"
                 onClick={() => {
                   setQuery(suggestedQuery);
-                  void handleSearch(suggestedQuery);
+                  void handleSearch(suggestedQuery, true);
                 }}
               >
-                {suggestedQuery}
+                Search “{suggestedQuery}”
               </button>
-              ?
+              <button
+                className="spelling-suggestion-original"
+                type="button"
+                onClick={() => void handleSearch(query, true)}
+              >
+                Search as typed
+              </button>
             </div>
           )}
 
@@ -943,15 +1082,12 @@ function App() {
             <div className="loading-spinner" />
 
             <div>
-              <strong>
-                Searching your talent
-                database
-              </strong>
+              <strong>{searchPhase === "checking" ? "Checking query spelling" : "Searching your talent database"}</strong>
 
               <p>
-                Finding candidates
-                that match your
-                requirements...
+                {searchPhase === "checking"
+                  ? "Checking for likely spelling mistakes before searching..."
+                  : "Finding candidates that match your requirements..."}
               </p>
             </div>
           </section>
@@ -1101,8 +1237,188 @@ function App() {
               )}
 
               {resultCount > 0 ? (
-                <div className="candidate-list">
-                  {data.results.map(
+                <div className="results-content-grid">
+                  <aside className="result-filter-panel" aria-label="Filter search results">
+                    <div className="filter-panel-heading">
+                      <div>
+                        <h3>Filters</h3>
+                        <span>{filteredResults.length} of {resultCount} shown</span>
+                      </div>
+                      {hasActiveFilters && (
+                        <button
+                          className="filter-clear-button"
+                          type="button"
+                          onClick={() => {
+                            setSelectedRoleFilters([]);
+                            setSelectedSkillFilters([]);
+                            setSelectedSeniorityFilters([]);
+                            setRoleDropdownOpen(false);
+                            setSkillDropdownOpen(false);
+                            setRoleFilterSearch("");
+                            setSkillFilterSearch("");
+                          }}
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+
+                    <p className="filter-scope-note">Filters apply to the candidates returned for this search.</p>
+
+                    <fieldset className="filter-group">
+                      <legend>Role</legend>
+                      {availableRoles.length ? (
+                        <div className="filter-dropdown" ref={roleDropdownRef}>
+                          <button
+                            className={`filter-dropdown-trigger${roleDropdownOpen ? " is-open" : ""}`}
+                            type="button"
+                            aria-expanded={roleDropdownOpen}
+                            aria-controls="role-filter-options"
+                            onClick={() => {
+                              setRoleDropdownOpen((open) => !open);
+                              setSkillDropdownOpen(false);
+                            }}
+                          >
+                            <span>
+                              {selectedRoleFilters.length
+                                ? `${selectedRoleFilters.length} role${selectedRoleFilters.length === 1 ? "" : "s"} selected`
+                                : "Select roles"}
+                            </span>
+                            <span className="filter-dropdown-chevron" aria-hidden="true">⌄</span>
+                          </button>
+                          {roleDropdownOpen && (
+                            <div className="filter-dropdown-menu" id="role-filter-options">
+                              <input
+                                className="filter-dropdown-search"
+                                type="search"
+                                value={roleFilterSearch}
+                                onChange={(event) => setRoleFilterSearch(event.target.value)}
+                                placeholder="Search role titles"
+                                aria-label="Search available roles"
+                              />
+                              <div className="filter-dropdown-options">
+                                {roleFilterSearch.trim().length < 2 ? (
+                                  <span className="filter-unavailable">Type at least 2 characters to see title suggestions</span>
+                                ) : visibleRoleOptions.length ? visibleRoleOptions.map((role) => (
+                                  <label className="filter-option" key={role}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedRoleFilters.includes(role)}
+                                      onChange={() => setSelectedRoleFilters((current) =>
+                                        current.includes(role)
+                                          ? current.filter((item) => item !== role)
+                                          : [...current, role]
+                                      )}
+                                    />
+                                    <span>{role}</span>
+                                  </label>
+                                )) : (
+                                  <span className="filter-unavailable">No roles match this search</span>
+                                )}
+                              </div>
+                              {selectedRoleFilters.length > 0 && (
+                                <button
+                                  className="filter-dropdown-clear"
+                                  type="button"
+                                  onClick={() => setSelectedRoleFilters([])}
+                                >
+                                  Clear selected roles
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ) : <span className="filter-unavailable">No role data in these results</span>}
+                    </fieldset>
+
+                    <fieldset className="filter-group">
+                      <legend>Skills</legend>
+                      {availableSkills.length ? (
+                        <div className="filter-dropdown" ref={skillDropdownRef}>
+                          <button
+                            className={`filter-dropdown-trigger${skillDropdownOpen ? " is-open" : ""}`}
+                            type="button"
+                            aria-expanded={skillDropdownOpen}
+                            aria-controls="skill-filter-options"
+                            onClick={() => {
+                              setSkillDropdownOpen((open) => !open);
+                              setRoleDropdownOpen(false);
+                            }}
+                          >
+                            <span>
+                              {selectedSkillFilters.length
+                                ? `${selectedSkillFilters.length} skill${selectedSkillFilters.length === 1 ? "" : "s"} selected`
+                                : "Select skills"}
+                            </span>
+                            <span className="filter-dropdown-chevron" aria-hidden="true">⌄</span>
+                          </button>
+                          {skillDropdownOpen && (
+                            <div className="filter-dropdown-menu" id="skill-filter-options">
+                              <input
+                                className="filter-dropdown-search"
+                                type="search"
+                                value={skillFilterSearch}
+                                onChange={(event) => setSkillFilterSearch(event.target.value)}
+                                placeholder="Search skills"
+                                aria-label="Search available skills"
+                              />
+                              <div className="filter-dropdown-options">
+                                {visibleSkillOptions.length ? visibleSkillOptions.map((skill) => (
+                                  <label className="filter-option" key={skill}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedSkillFilters.includes(skill)}
+                                      onChange={() => setSelectedSkillFilters((current) =>
+                                        current.includes(skill)
+                                          ? current.filter((item) => item !== skill)
+                                          : [...current, skill]
+                                      )}
+                                    />
+                                    <span>{skill}</span>
+                                  </label>
+                                )) : (
+                                  <span className="filter-unavailable">No skills match this search</span>
+                                )}
+                              </div>
+                              {selectedSkillFilters.length > 0 && (
+                                <button
+                                  className="filter-dropdown-clear"
+                                  type="button"
+                                  onClick={() => setSelectedSkillFilters([])}
+                                >
+                                  Clear selected skills
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ) : <span className="filter-unavailable">No skill data in these results</span>}
+                    </fieldset>
+
+                    <fieldset className="filter-group">
+                      <legend>Seniority</legend>
+                      <p className="filter-group-note">Based on total experience</p>
+                      {availableSeniority.map((band) => (
+                        <label className="filter-option" key={band}>
+                          <input
+                            type="checkbox"
+                            checked={selectedSeniorityFilters.includes(band)}
+                            onChange={() => setSelectedSeniorityFilters((current) =>
+                              current.includes(band)
+                                ? current.filter((item) => item !== band)
+                                : [...current, band]
+                            )}
+                          />
+                          <span>{band}{band === "Entry" ? " · 0–2 years" : band === "Mid" ? " · 3–7 years" : band === "Senior" ? " · 8+ years" : ""}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  </aside>
+
+                  <div className="results-list-column">
+                    {filteredResults.length ? (
+                      <div className="candidate-list">
+                  {filteredResults.map(
                     (candidate) => {
                       const shownProofs = new Set<string>();
                       const displayedRequirements = groupMatchedRequirements(
@@ -1169,7 +1485,25 @@ function App() {
                                   {displayedRequirements
                                     .filter((match) => match.matched)
                                     .map((match, index) => {
-                                      const proofs = (match.evidence ?? [])
+                                      const profileProjectProofs: Evidence[] =
+                                        match.requirement_types?.includes("skill")
+                                          ? candidate.projects
+                                              .filter((project) => {
+                                                const requirement = match.requirement.trim().toLocaleLowerCase();
+                                                return (project.skills ?? []).some((skill) =>
+                                                  skill.trim().toLocaleLowerCase() === requirement
+                                                ) || `${project.title} ${project.description ?? ""}`
+                                                  .toLocaleLowerCase()
+                                                  .includes(requirement);
+                                              })
+                                              .map((project, projectIndex) => ({
+                                                evidence_type: "project",
+                                                source_id: `profile-project-${projectIndex}`,
+                                                source: project.title,
+                                                text: project.description?.trim() || project.title,
+                                              }))
+                                          : [];
+                                      const proofs = [...(match.evidence ?? []), ...profileProjectProofs]
                                         .filter((item) => item.text?.trim())
                                         .filter((item) => !(
                                           match.requirement_types?.includes("skill") &&
@@ -1245,6 +1579,14 @@ function App() {
                       );
                     }
                   )}
+                      </div>
+                    ) : (
+                      <div className="filter-empty-state">
+                        <strong>No candidates match these filters</strong>
+                        <p>Try removing a selection or clear the filters to see all {resultCount} returned candidates.</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="empty-state">

@@ -1,10 +1,19 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from qdrant_client.models import Filter, FieldCondition, MatchValue
+
 from app.database.models.candidate_evidence import CandidateEvidence
 from app.database.models.resume import Resume
 
-from app.ingestion.vector.indexing import index_evidence
+from app.ingestion.vector.indexing import (
+    index_evidence,
+)
+from app.ingestion.vector.qdrant_client import (
+    COLLECTION_NAME,
+    client,
+    ensure_collection,
+)
 
 
 def index_candidate_evidence(
@@ -14,13 +23,17 @@ def index_candidate_evidence(
     """
     Index all evidence belonging to one candidate.
 
-    Returns the number of successfully indexed evidence records.
+    Returns the number of successfully indexed
+    evidence records.
     """
+
+    ensure_collection()
 
     evidence_records = db.scalars(
         select(CandidateEvidence)
         .where(
-            CandidateEvidence.candidate_id == candidate_id
+            CandidateEvidence.candidate_id
+            == candidate_id
         )
     ).all()
 
@@ -52,3 +65,28 @@ def index_candidate_evidence(
     db.commit()
 
     return indexed_count
+
+
+def delete_candidate_evidence(
+    candidate_id: int,
+) -> None:
+    """
+    Delete all Qdrant evidence points belonging
+    to a candidate.
+    """
+
+    ensure_collection()
+
+    client.delete(
+        collection_name=COLLECTION_NAME,
+        points_selector=Filter(
+            must=[
+                FieldCondition(
+                    key="candidate_id",
+                    match=MatchValue(
+                        value=candidate_id
+                    ),
+                )
+            ]
+        ),
+    )

@@ -57,7 +57,7 @@ _SEMANTIC_CONCEPTS = {
 _FAMILY_QUERY_PATTERNS = {
     "microsoft ecosystem": r"\bmicrosoft\s+(?:technology|technologies|ecosystem|stack)\b",
     "cloud technologies": r"\bcloud\s+(?:technology|technologies|ecosystem|platforms?)\b",
-    "backend technologies": r"\bback[- ]end\s+(?:tech|technolog(?:y|ies|ical))\b",
+    "backend technologies": r"\bback[- ]?end\s+(?:tech|technolog(?:y|ies|ical))\b",
 }
 _SEMANTIC_CONCEPT_PATTERNS = {
     "financial transformation": r"\b(?:financial|finance)\s+transformation\b|\b(?:finance|financial)\s+process\s+(?:optimization|improvement)\b",
@@ -254,6 +254,28 @@ def ensure_semantic_family_requirements(query: str, parsed_query) -> list[str]:
     for index, (canonical, pattern) in enumerate(_FAMILY_QUERY_PATTERNS.items(), start=1):
         if not re.search(pattern, query, re.IGNORECASE):
             continue
+        # A broad technology family is a semantic evidence request, not one
+        # literal skill. Remove only the family phrase itself if the parser
+        # also placed it in a structured skills field; keep concrete skills
+        # mentioned alongside it.
+        parsed_query.skills[:] = [
+            skill for skill in parsed_query.skills
+            if not re.search(pattern, str(skill), re.IGNORECASE)
+        ]
+        parsed_query.requirements[:] = [
+            requirement for requirement in parsed_query.requirements
+            if not (
+                (
+                    requirement_kind(requirement) == "skill"
+                    or requirement.type.upper() == "STRUCTURED"
+                )
+                and re.search(
+                    pattern,
+                    str(requirement.value or requirement.original_text),
+                    re.IGNORECASE,
+                )
+            )
+        ]
         already_represented = any(
             re.search(pattern, str(value), re.IGNORECASE)
             for value in parsed_query.semantic_requirements

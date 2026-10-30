@@ -1,0 +1,38 @@
+[
+  {
+    "query_id": "Q001",
+    "query": "candidates who has worked with machine leanring projects"
+  },
+  {
+    "query_id": "Q002",
+    "query": "find candidates who has experience with microsfoft ecosystem"
+  },
+  {
+    "query_id": "Q003",
+    "query": "candidates who has built products with ai and worked with langchain framework"
+  },
+  {
+    "query_id": "Q004",
+    "query": "Find candidates with React and Node.js experience who built e-commerce platforms"
+  },
+  {
+    "query_id": "Q005",
+    "query": "Find 10 Python developers with 3+ years of experience who built AI products"
+  },
+  {
+    "query_id": "Q006",
+    "query": "Find candidates with 3+ years of sales experience who have worked in B2B sales"
+  },
+  {
+    "query_id": "Q007",
+    "query": "Find sales candidates who have experience with CRM platforms and enterprise clients"
+  },
+  {
+    "query_id": "Q008",
+    "query": "Find candidates with 3+ years of experience in digital marketing who have worked on SEO campaigns"
+  },
+  {
+    "query_id": "Q009",
+    "query": "Find candidates with HR experience who have worked on recruitment and employee onboarding"
+  }
+]

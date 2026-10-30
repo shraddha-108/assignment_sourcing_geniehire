@@ -77,55 +77,276 @@ STRICT RULES:
 22. Do NOT infer years of experience from a skill list.
 
 23. Preserve candidate URLs only when explicitly present.
-24. Extract the candidate's explicitly stated current city/location into
-    candidate.location. Return null when the resume does not state it.
 
-24. Extract the candidate's actual name.
-    Never use an email, URL, company name, project name,
-    job title, skill, or section heading as the person's name.
+24. Extract the candidate's explicitly stated current city/location
+    into candidate.location.
 
-25. For every employment experience, evidence must contain the
+    - Use only location information explicitly stated for the candidate.
+    - Do not infer location from a phone number, email address,
+      company location, college location, project location,
+      or any other indirect information.
+    - If only a city is explicitly stated, extract the city.
+    - If city/state/country are explicitly stated, preserve that
+      location information.
+    - If the candidate's location is not explicitly stated,
+      return null.
+
+25. Extract the candidate's actual name.
+
+    Never use an email, URL, company name, project name, job title,
+    skill, or section heading as the person's name.
+
+26. For every employment experience, evidence must contain the
     complete original resume text belonging to that employment entry,
     including the role/company heading and all responsibilities,
     achievements, technologies, dates, and other text that belongs
     to that experience.
 
-26. For every project, evidence must contain the complete original
+27. For every project, evidence must contain the complete original
     resume text belonging to that project.
 
-27. Project evidence MUST NOT contain only the project title when
+28. Project evidence MUST NOT contain only the project title when
     the resume contains additional project-specific text.
 
-28. For every project:
+29. For every project:
     - title = project name/title only.
     - description = project description explicitly present in the resume.
-    - skills = technologies/skills explicitly associated with that project.
+    - skills = valid technologies/skills explicitly associated with
+      that project.
     - evidence = complete original resume text belonging to that project.
 
-29. If a project has a title and additional description/details in
+30. If a project has a title and additional description/details in
     the resume, include ALL of that project-specific text in evidence.
 
-30. Do not replace project evidence with a summary, paraphrase,
+31. Do not replace project evidence with a summary, paraphrase,
     or generated description.
 
-31. Do not use the project title alone as evidence unless the resume
+32. Do not use the project title alone as evidence unless the resume
     genuinely contains no other text belonging to that project.
 
-32. Do not copy text from another project, employment experience,
+33. Do not copy text from another project, employment experience,
     education, or unrelated section into project evidence.
 
-33. If the same project contains multiple lines, bullets, technologies,
+34. If the same project contains multiple lines, bullets, technologies,
     responsibilities, dates, or achievements, preserve them together
     as one project's evidence.
 
-34. Extract explicitly mentioned skills from the entire resume,
-    not only from a section called "Skills".
+35. The top-level `skills` list is only for skills explicitly listed
+    in a dedicated candidate skills section (for example, "Skills",
+    "Technical Skills", or "Core Competencies").
 
-35. If no projects exist, return an empty projects list.
+    Do not collect words from employment descriptions, project
+    descriptions, education, summaries, or other resume text into
+    this candidate-level list.
 
-36. If no education exists, return an empty education list.
+36. Keep technologies and skills mentioned in a job or project attached
+    only to that experience or project when the surrounding text
+    supports their use there.
 
-37. If no employment exists, return an empty experiences list.
+    Do not copy those into the top-level `skills` list unless they
+    are also explicitly listed in the dedicated skills section.
+
+
+SKILL EXTRACTION RULES
+======================
+
+37. A "skill" must represent a real technical skill, technology,
+    tool, framework, programming language, database, platform,
+    methodology, professional competency, or clearly established
+    domain expertise.
+
+38. Do NOT treat every noun appearing in a project or experience
+    description as a skill.
+
+39. Do NOT extract ordinary business entities, objects, people,
+    outputs, or things being worked on as skills.
+
+40. The following are examples of things that should NOT automatically
+    be extracted as skills:
+
+    - customers
+    - vendors
+    - employees
+    - users
+    - clients
+    - products
+    - invoices
+    - reports
+    - documents
+    - records
+    - transactions
+    - orders
+    - accounts
+    - business requirements
+    - company names
+    - project names
+    - departments
+    - job titles
+
+41. A noun should only be extracted as a skill when the resume
+    explicitly presents it as a professional competency, technical
+    capability, or specialized domain expertise.
+
+42. Examples:
+
+    "Developed REST APIs using Python and FastAPI"
+
+    Valid skills:
+    - Python
+    - FastAPI
+    - REST API
+
+    Do NOT extract:
+    - APIs
+    - applications
+    - users
+    - data
+
+
+43. Example:
+
+    "Master Data Creation for Customers, Vendors, Financial Dimensions"
+
+    Valid skill:
+    - Master Data Creation
+
+    Do NOT extract:
+    - customers
+    - vendors
+
+    "Financial Dimensions" should NOT automatically be treated as
+    a skill merely because it appears in this sentence. Only extract
+    it when the resume clearly establishes it as a specialized
+    professional competency or domain expertise.
+
+44. Example:
+
+    "Built a Django application using PostgreSQL, Redis and Docker"
+
+    Valid skills:
+    - Django
+    - PostgreSQL
+    - Redis
+    - Docker
+
+    Do NOT extract:
+    - application
+    - users
+    - database records
+
+45. Example:
+
+    "Performed testing and debugging of the application"
+
+    Valid skill:
+    - Testing
+    - Debugging
+
+    Do NOT extract:
+    - application
+
+46. Example:
+
+    "Prepared functional design documents based on business
+    requirements"
+
+    Possible valid skill:
+    - Functional Design
+
+    Do NOT extract:
+    - documents
+    - business requirements
+
+47. Prefer the actual technology or competency rather than the
+    surrounding noun describing what was handled.
+
+48. Do not create a skill by combining unrelated nouns.
+
+49. Do not convert every project description phrase into a skill.
+
+50. Do not extract generic words such as:
+    - work
+    - project
+    - team
+    - company
+    - client
+    - process
+    - system
+    - application
+    - solution
+    - data
+    - information
+
+    unless the resume clearly uses the term as part of a recognized
+    professional skill or technology.
+
+51. Preserve the skill wording from the resume when it clearly
+    represents a skill.
+
+52. Do not invent a more specific technology or competency than
+    what the resume explicitly states.
+
+53. For experience and project skills, include only skills that are
+    explicitly supported by the surrounding experience/project text.
+
+54. When uncertain whether a word is a skill or merely a business
+    object/entity, prefer NOT extracting it as a skill.
+
+55. The goal is a high-precision skill list, not a high-volume list.
+    It is better to omit a questionable item than to store an
+    ordinary business noun as a skill.
+
+
+PROJECT RULES
+=============
+
+56. For every project, extract only genuine skills associated with
+    that project.
+
+57. Do not turn project description nouns into skills.
+
+58. For example, if the project says:
+
+    "Master Data Creation for Customers, Vendors, Financial Dimensions."
+
+    the project skills should contain:
+
+    ["Master Data Creation"]
+
+    rather than:
+
+    ["customers", "vendors", "financial dimensions", "master data creation"].
+
+
+EXPERIENCE RULES
+================
+
+59. For every employment experience, extract only genuine skills
+    demonstrated or explicitly mentioned in that experience.
+
+60. Do not extract ordinary business objects from responsibilities
+    as skills.
+
+61. Preserve the distinction between:
+    - technology
+    - tool
+    - methodology
+    - professional competency
+    - domain expertise
+    - business object/entity
+
+
+GENERAL RESUME RULES
+====================
+
+62. If no projects exist, return an empty projects list.
+
+63. If no education exists, return an empty education list.
+
+64. If no employment exists, return an empty experiences list.
+
+65. If no valid skills are explicitly supported, return an empty
+    skills list rather than guessing.
 """
 
 
@@ -156,12 +377,62 @@ Remember:
 - Do not invent information.
 - Do not calculate experience.
 - Preserve employment/project relationships.
+- Populate the top-level skills list only from a dedicated skills section.
+- Do not promote words from projects, employment, education, or summaries
+  into the top-level skills list.
 - Preserve evidence wording exactly as much as possible.
 - Project evidence must contain the complete original text
   belonging to that project.
 - Do not use only a project title as evidence when additional
   project information exists.
+- Extract candidate.location only when the candidate's location is
+  explicitly stated in the resume.
+- Do not infer location from phone numbers, email addresses,
+  company locations, college locations, or other indirect information.
 - Return null when information is unavailable.
+
+IMPORTANT SKILL RULE:
+
+For project and experience `skills`, extract only genuine skills,
+technologies, tools, frameworks, programming languages, databases,
+platforms, methodologies, professional competencies, or clearly
+established domain expertise.
+
+Do NOT treat every noun in the project or experience description
+as a skill.
+
+Do NOT extract ordinary business entities or objects such as:
+customers, vendors, users, clients, products, invoices, reports,
+documents, records, transactions, orders, or accounts.
+
+For example:
+
+"Master Data Creation for Customers, Vendors, Financial Dimensions."
+
+should produce:
+
+["Master Data Creation"]
+
+and should NOT produce:
+
+["customers", "vendors", "financial dimensions", "master data creation"]
+
+Another example:
+
+"Built a Django application using PostgreSQL, Redis and Docker."
+
+should produce:
+
+["Django", "PostgreSQL", "Redis", "Docker"]
+
+and should NOT produce:
+
+["application", "users", "data"]
+
+When uncertain whether something is a genuine skill or merely
+a business noun/entity, prefer NOT extracting it.
+
+The goal is high-precision skill extraction.
 
 RESUME:
 

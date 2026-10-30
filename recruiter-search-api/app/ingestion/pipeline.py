@@ -11,7 +11,16 @@ from app.ingestion.normalizer import normalize_resume
 from app.ingestion.validator import validate_resume
 from app.ingestion.service import persist_candidate
 
-from app.ingestion.vector.index_service import index_candidate_evidence
+from app.ingestion.vector.index_service import (
+    index_candidate_evidence,
+    delete_candidate_evidence,
+)
+
+from app.storage.s3_resume import (
+    build_resume_storage_key,
+    upload_resume,
+    delete_resume,
+)
 
 
 def ingest_resume(
@@ -21,11 +30,15 @@ def ingest_resume(
     """
     Run the complete resume ingestion pipeline.
 
-    Current flow:
+    Flow:
 
         Local resume
             ↓
-        Extraction
+        SHA-256 hash
+            ↓
+        S3 upload
+            ↓
+        Text extraction
             ↓
         LLM parsing
             ↓
@@ -35,14 +48,21 @@ def ingest_resume(
             ↓
         PostgreSQL
             ↓
+        Candidate evidence
+            ↓
         Qdrant indexing
             ↓
         Completed
 
-    Returns basic ingestion information.
+    The PostgreSQL resume.storage_key always contains
+    the S3 object key, never the local filesystem path.
     """
 
     file_path = Path(file_path)
+
+    # ==================================================
+    # 0. Validate local file
+    # ==================================================
 
     if not file_path.exists():
         raise FileNotFoundError(
@@ -54,40 +74,105 @@ def ingest_resume(
             f"Path is not a file: {file_path}"
         )
 
-    # --------------------------------------------------
-    # 1. EXTRACT
-    # --------------------------------------------------
+    # ==================================================
+    # 1. Calculate file hash
+    # ==================================================
 
-    print("\n[1/7] Extracting resume text...")
+    print("\n[1/8] Calculating file hash...")
 
-    text = extract_text(file_path)
+    file_hash = calculate_file_hash(
+        file_path
+    )
 
-    if not text or not text.strip():
-        raise ValueError(
-            "Resume extraction returned empty text."
+    print(
+        f"      SHA-256: {file_hash}"
+    )
+
+    # ==================================================
+    # 2. Upload resume to S3
+    # ==================================================
+
+    storage_key = build_resume_storage_key(
+        file_hash=file_hash,
+        filename=file_path.name,
+    )
+
+    print("[2/8] Uploading resume to S3...")
+
+    upload_resume(
+        file_path=file_path,
+        storage_key=storage_key,
+    )
+
+    print(
+        f"      S3 key: {storage_key}"
+    )
+
+    # ==================================================
+    # 3. Extract
+    # ==================================================
+
+    print("[3/8] Extracting resume text...")
+
+    try:
+
+        text = extract_text(
+            file_path
         )
 
-    print(
-        f"      Extracted {len(text)} characters."
-    )
+        if not text or not text.strip():
+            raise ValueError(
+                "Resume extraction returned empty text."
+            )
 
-    # --------------------------------------------------
-    # 2. PARSE
-    # --------------------------------------------------
+        print(
+            f"      Extracted {len(text)} characters."
+        )
 
-    print("[2/7] Parsing resume with LLM...")
+    except Exception:
 
-    resume_data = parse_resume(text)
+        # Extraction failed after S3 upload.
+        # Remove the uploaded object so S3 does not
+        # contain a resume that was never ingested.
 
-    print(
-        f"      Candidate: {resume_data.candidate.name}"
-    )
+        try:
+            delete_resume(storage_key)
+        except Exception:
+            pass
 
-    # --------------------------------------------------
-    # 3. NORMALIZE
-    # --------------------------------------------------
+        raise
 
-    print("[3/7] Normalizing resume data...")
+    # ==================================================
+    # 4. Parse
+    # ==================================================
+
+    print("[4/8] Parsing resume with LLM...")
+
+    try:
+
+        resume_data = parse_resume(
+            text
+        )
+
+        print(
+            f"      Candidate: "
+            f"{resume_data.candidate.name}"
+        )
+
+    except Exception:
+
+        try:
+            delete_resume(storage_key)
+        except Exception:
+            pass
+
+        raise
+
+    # ==================================================
+    # 5. Normalize
+    # ==================================================
+
+    print("[5/8] Normalizing resume data...")
 
     resume_data = normalize_resume(
         resume_data
@@ -97,69 +182,90 @@ def ingest_resume(
         "      Normalization completed."
     )
 
-    # --------------------------------------------------
-    # 4. VALIDATE
-    # --------------------------------------------------
+    # ==================================================
+    # 6. Validate
+    # ==================================================
 
-    print("[4/7] Validating resume data...")
+    print("[6/8] Validating resume data...")
 
-    validate_resume(
-        resume_data
-    )
+    try:
 
-    print(
-        "      Validation passed."
-    )
+        validate_resume(
+            resume_data
+        )
 
-    # --------------------------------------------------
-    # 5. PERSIST TO POSTGRESQL
-    # --------------------------------------------------
+        print(
+            "      Validation passed."
+        )
 
-    print("[5/7] Persisting resume to PostgreSQL...")
+    except Exception:
 
-    file_hash = calculate_file_hash(
-        file_path
-    )
+        try:
+            delete_resume(storage_key)
+        except Exception:
+            pass
 
-    candidate = persist_candidate(
-        db=db,
-        resume_data=resume_data,
-        filename=file_path.name,
-        storage_key=str(file_path),
-        file_hash=file_hash,
-        file_type=file_path.suffix.lower(),
-        file_size=file_path.stat().st_size,
-    )
+        raise
+
+    # ==================================================
+    # 7. PostgreSQL
+    # ==================================================
 
     print(
-        f"      Candidate ID: {candidate.id}"
+        "[7/8] Persisting resume to PostgreSQL..."
     )
 
-    # --------------------------------------------------
-    # Create ingestion run
-    #
-    # We create it here because the current schema
-    # requires resume_id.
-    # --------------------------------------------------
+    try:
 
-    resume = candidate.resumes[-1]
+        candidate = persist_candidate(
+            db=db,
+            resume_data=resume_data,
+            filename=file_path.name,
 
-    ingestion_run = IngestionRun(
-        resume_id=resume.id,
-        status="INDEXING",
-        current_stage="QDRANT_INDEXING",
-        started_at=datetime.utcnow(),
+            # IMPORTANT:
+            # Store S3 key, NOT local file path.
+            storage_key=storage_key,
+
+            file_hash=file_hash,
+            file_type=file_path.suffix.lower(),
+            file_size=file_path.stat().st_size,
+        )
+
+        print(
+            f"      Candidate ID: {candidate.id}"
+        )
+
+        resume = candidate.resumes[-1]
+
+        ingestion_run = IngestionRun(
+            resume_id=resume.id,
+            status="INDEXING",
+            current_stage="QDRANT_INDEXING",
+            started_at=datetime.utcnow(),
+        )
+
+        db.add(ingestion_run)
+        db.commit()
+        db.refresh(ingestion_run)
+
+    except Exception:
+
+        db.rollback()
+
+        try:
+            delete_resume(storage_key)
+        except Exception:
+            pass
+
+        raise
+
+    # ==================================================
+    # 8. Qdrant
+    # ==================================================
+
+    print(
+        "[8/8] Indexing evidence into Qdrant..."
     )
-
-    db.add(ingestion_run)
-    db.commit()
-    db.refresh(ingestion_run)
-
-    # --------------------------------------------------
-    # 6. INDEX EVIDENCE INTO QDRANT
-    # --------------------------------------------------
-
-    print("[6/7] Indexing evidence into Qdrant...")
 
     try:
 
@@ -168,12 +274,32 @@ def ingest_resume(
             candidate_id=candidate.id,
         )
 
+        ingestion_run.status = "COMPLETED"
+        ingestion_run.current_stage = "COMPLETED"
+        ingestion_run.completed_at = datetime.utcnow()
+
+        db.commit()
+
         print(
             f"      Indexed {indexed_count} evidence records."
         )
 
+        print(
+            "[DONE] Ingestion completed successfully."
+        )
+
+        return {
+            "candidate_id": candidate.id,
+            "resume_id": resume.id,
+            "ingestion_run_id": ingestion_run.id,
+            "storage_key": storage_key,
+            "indexed_evidence_count": indexed_count,
+            "status": "COMPLETED",
+        }
+
     except Exception as exc:
 
+        # Mark ingestion as failed.
         ingestion_run.status = "FAILED"
         ingestion_run.current_stage = "QDRANT_INDEXING"
         ingestion_run.error_message = str(exc)
@@ -181,27 +307,29 @@ def ingest_resume(
 
         db.commit()
 
+        # Remove Qdrant points created for this candidate.
+        try:
+            delete_candidate_evidence(
+                candidate_id=candidate.id
+            )
+        except Exception:
+            pass
+
+        # Remove PostgreSQL records created for this
+        # candidate.
+        #
+        # This assumes your reset/re-ingestion workflow
+        # is operating on a clean database and that
+        # cascading relationships are configured.
+        #
+        # If you want transactional rollback of the
+        # complete candidate tree, we should refactor
+        # persist_candidate to avoid its internal commit.
+        #
+        # For now we keep the failed ingestion visible
+        # through ingestion_run.
+
         raise
-
-    # --------------------------------------------------
-    # 7. COMPLETE
-    # --------------------------------------------------
-
-    ingestion_run.status = "COMPLETED"
-    ingestion_run.current_stage = "COMPLETED"
-    ingestion_run.completed_at = datetime.utcnow()
-
-    db.commit()
-
-    print("[7/7] Ingestion completed successfully.")
-
-    return {
-        "candidate_id": candidate.id,
-        "resume_id": resume.id,
-        "ingestion_run_id": ingestion_run.id,
-        "indexed_evidence_count": indexed_count,
-        "status": "COMPLETED",
-    }
 
 
 def calculate_file_hash(
@@ -209,9 +337,6 @@ def calculate_file_hash(
 ) -> str:
     """
     Calculate SHA-256 hash of the resume file.
-
-    Used by the resumes table to uniquely identify
-    the uploaded file.
     """
 
     import hashlib

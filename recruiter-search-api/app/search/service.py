@@ -4,7 +4,9 @@ from app.search.parser import parse_query
 from app.search.classifier import classify_query
 from app.search.requirements import normalize_requirement_graph
 from app.search.normalization import (
+    _FAMILY_QUERY_PATTERNS,
     canonical_term,
+    equivalent_terms,
     ensure_semantic_family_requirements,
     normalize_explicit_semantic_or,
     normalize_phrase,
@@ -46,6 +48,47 @@ def build_routing_packet(query: str) -> RoutingPacket:
     parsed_query = parse_query(query)
     family_assumptions = ensure_semantic_family_requirements(query, parsed_query)
 
+    explicit_skill = re.search(
+        r"\bknows?\s+(?P<skill>[^,;.!?]+?)(?=\s+and\s+|\s*[?.!]*$)",
+        query,
+        re.IGNORECASE,
+    )
+    if explicit_skill:
+        skill = re.sub(
+            r"\s+(?:framework|technology|technologies|language|tool|tools)$",
+            "",
+            " ".join(explicit_skill.group("skill").split()),
+            flags=re.IGNORECASE,
+        ).strip()
+        is_broad_family = any(
+            re.search(pattern, skill, re.IGNORECASE)
+            for pattern in _FAMILY_QUERY_PATTERNS.values()
+        )
+        existing_skills = {
+            normalize_phrase(value) for value in parsed_query.skills
+        }
+        existing_skills.update(
+            normalize_phrase(str(item.value))
+            for item in parsed_query.requirements
+            if (item.field or "").casefold() in {"skill", "skills"}
+            and isinstance(item.value, str)
+        )
+        if skill and not is_broad_family and normalize_phrase(skill) not in existing_skills:
+            parsed_query.skills.append(skill)
+            parsed_query.requirements.append(SearchRequirement(
+                id="explicit_known_skill",
+                original_text=skill,
+                normalized_text=normalize_phrase(skill),
+                type="STRUCTURED",
+                mandatory=True,
+                source_of_truth="candidate_skills",
+                capabilities=["structured_candidate_lookup"],
+                field="skill",
+                value=skill,
+                canonical_value=canonical_term(skill, "skill"),
+                confidence=0.9,
+            ))
+
     # Preserve the recruiter’s actual activity wording when the query is
     # phrased as “candidates who have <activity>”. This avoids parser entity
     # substitutions such as changing “built products” into “built candidates”.
@@ -53,18 +96,31 @@ def build_routing_packet(query: str) -> RoutingPacket:
         r"\b(?:who|that)\s+(?:(?:has|have|had|is|are|was|were)\s+)?"
         r"(?P<activity>(?:built|builds?|developed|develops?|created|creates?|"
         r"designed|designs?|implemented|implements?|integrated|integrates?|"
-        r"managed|manages?|led|leads?)\b.+?)\s*[?.!]*$",
+        r"managed|manages?|led|leads?)\b.+?)"
+        # Keep independently introduced clauses separate. In a query such as
+        # "built AI products and who has worked with LangChain", the first
+        # activity is the AI product requirement; LangChain is its own
+        # structured or semantic requirement and must not be folded into it.
+        r"(?=\s+and\s+(?:(?:who|that)\s+)?"
+        r"(?:(?:has|have|had|is|are|was|were)\s+)?"
+        r"(?:built|builds?|developed|develops?|created|creates?|designed|"
+        r"designs?|implemented|implements?|integrated|integrates?|worked|"
+        r"works?|used|uses?|knows?|managed|manages?|led|leads?)\b|"
+        r"\s*[?.!]*$)",
         query,
         re.IGNORECASE,
     )
-    if activity_clause and parsed_query.semantic_requirements:
+    semantic_nodes = [
+        item for item in parsed_query.requirements
+        if item.type == "SEMANTIC"
+        or "semantic_evidence_retrieval" in item.capabilities
+    ]
+    if activity_clause and (parsed_query.semantic_requirements or semantic_nodes):
         preserved_activity = " ".join(activity_clause.group("activity").split())
-        parsed_query.semantic_requirements[0] = preserved_activity
-        semantic_nodes = [
-            item for item in parsed_query.requirements
-            if item.type == "SEMANTIC"
-            or "semantic_evidence_retrieval" in item.capabilities
-        ]
+        if parsed_query.semantic_requirements:
+            parsed_query.semantic_requirements[0] = preserved_activity
+        else:
+            parsed_query.semantic_requirements.append(preserved_activity)
         if semantic_nodes:
             semantic_nodes[0].original_text = preserved_activity
             semantic_nodes[0].normalized_text = preserved_activity.casefold()
@@ -467,6 +523,8 @@ def build_routing_packet(query: str) -> RoutingPacket:
                 confidence=0.75,
             ))
 
+    _normalize_explicit_structured_skill_or(query, requirements)
+
     parsed_query.semantic_requirements = normalize_explicit_semantic_or(
         query,
         requirements,
@@ -566,3 +624,56 @@ def build_routing_packet(query: str) -> RoutingPacket:
         structured_requirements=structured_requirements,
         semantic_requirements=specification.semantic_requirements,
     )
+
+
+def _normalize_explicit_structured_skill_or(
+    query: str,
+    requirements: list[SearchRequirement],
+) -> None:
+    """Mark explicitly written skill alternatives as one structured OR group."""
+    skill_requirements = [
+        requirement
+        for requirement in requirements
+        if (requirement.field or "").casefold() in {"skill", "skills"}
+        and isinstance(requirement.value, str)
+        and requirement.value.strip()
+    ]
+    mentions = []
+    for requirement in skill_requirements:
+        aliases = requirement.equivalent_terms or equivalent_terms(
+            requirement.value, "skill"
+        )
+        probes = set(aliases + [requirement.value, requirement.original_text])
+        for probe in probes:
+            normalized_probe = " ".join(probe.strip().split())
+            if not normalized_probe:
+                continue
+            pattern = re.escape(normalized_probe).replace(r"\ ", r"\s+")
+            for match in re.finditer(
+                rf"(?<![\w]){pattern}(?![\w])",
+                query,
+                re.IGNORECASE,
+            ):
+                mentions.append((match.start(), match.end(), requirement))
+
+    # De-duplicate alias matches for each requirement, then inspect adjacent
+    # mentioned skills in the original query. Only an explicit "or" joins them.
+    unique_mentions = {}
+    for start, end, requirement in mentions:
+        unique_mentions[(start, end, requirement.id)] = (start, end, requirement)
+    ordered = sorted(unique_mentions.values(), key=lambda item: (item[0], item[1]))
+    groups = []
+    for left, right in zip(ordered, ordered[1:]):
+        gap = query[left[1]:right[0]]
+        if not re.fullmatch(r"\s*(?:[,;]\s*)?or(?:\s*[,;])?\s*", gap, re.IGNORECASE):
+            continue
+        if groups and groups[-1][-1].id == left[2].id:
+            groups[-1].append(right[2])
+        else:
+            groups.append([left[2], right[2]])
+
+    for index, group in enumerate(groups, start=1):
+        group_id = f"explicit_skill_or_{index}"
+        for requirement in group:
+            requirement.group_id = group_id
+            requirement.relationship = "OR"

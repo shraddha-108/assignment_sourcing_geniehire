@@ -4,6 +4,7 @@ from qdrant_client.models import PointStruct
 
 from app.ingestion.vector.bm25 import bm25_document
 from app.ingestion.vector.embeddings import embed_text
+
 from app.ingestion.vector.qdrant_client import (
     COLLECTION_NAME,
     DENSE_VECTOR_NAME,
@@ -18,9 +19,10 @@ def create_point_id(
     evidence_id: int,
 ) -> str:
     """
-    Create a deterministic UUID for a candidate evidence record.
+    Create a deterministic UUID for a candidate
+    evidence record.
 
-    The same candidate/evidence pair will always produce
+    The same candidate/evidence pair always produces
     the same Qdrant point ID.
     """
 
@@ -44,7 +46,7 @@ def index_evidence(
     """
     Convert one CandidateEvidence record into:
 
-    - dense embedding
+    - dense semantic embedding
     - BM25 sparse vector
 
     and store both in Qdrant.
@@ -57,30 +59,34 @@ def index_evidence(
 
     ensure_collection()
 
-    # --------------------------------------------------
-    # Dense semantic vector
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # Dense vector
+    # ----------------------------------------------
 
-    dense_vector = embed_text(text)
-
-    # --------------------------------------------------
-    # Sparse BM25 vector
-    # --------------------------------------------------
-
-    sparse_vector = bm25_document(text)
-
-    # --------------------------------------------------
-    # Deterministic Qdrant point ID
-    # --------------------------------------------------
-
-    point_id = create_point_id(
-        candidate_id,
-        evidence_id,
+    dense_vector = embed_text(
+        text
     )
 
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # Sparse BM25 vector
+    # ----------------------------------------------
+
+    sparse_vector = bm25_document(
+        text
+    )
+
+    # ----------------------------------------------
+    # Deterministic point ID
+    # ----------------------------------------------
+
+    point_id = create_point_id(
+        candidate_id=candidate_id,
+        evidence_id=evidence_id,
+    )
+
+    # ----------------------------------------------
     # Payload
-    # --------------------------------------------------
+    # ----------------------------------------------
 
     payload = {
         "candidate_id": candidate_id,
@@ -91,9 +97,9 @@ def index_evidence(
         "text": text,
     }
 
-    # --------------------------------------------------
-    # Store both vectors
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # Upsert
+    # ----------------------------------------------
 
     client.upsert(
         collection_name=COLLECTION_NAME,

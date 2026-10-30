@@ -92,6 +92,20 @@ def health():
 # ============================================================
 
 
+@app.post("/search/suggestion")
+def suggest_search_query(request: SearchRequest):
+    """Check a query for a conservative spelling correction before search."""
+    query = request.query.strip()
+    if not query:
+        raise HTTPException(
+            status_code=400,
+            detail="Search query cannot be empty.",
+        )
+    return {
+        "suggested_query": suggest_query_correction(query),
+    }
+
+
 @app.post("/search")
 def search_candidates(
     request: SearchRequest,

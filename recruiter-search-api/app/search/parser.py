@@ -124,6 +124,10 @@ Extraction rules:
 
 9. requirements
    Decompose the full query into independent, uniquely identified requirements.
+   Keep separately introduced clauses separate, especially when the query
+   repeats "who" or "that" after AND. For example, "built products with AI
+   and who has worked with LangChain" contains an AI-product activity and a
+   separate LangChain requirement; do not create one combined semantic phrase.
    For each requirement provide id, original_text, normalized_text, type,
    mandatory, match_mode, source_of_truth, capabilities, dependencies, relationship,
    related_requirements, group_id, and
@@ -158,6 +162,11 @@ Extraction rules:
 Important:
 
 A technical skill such as Python should normally go into `skills`.
+Phrases such as "knows LangChain" or "familiar with React" express a
+structured skill requirement; do not turn them into semantic project or
+experience requirements. Broad families such as "backend technologies",
+"cloud technologies", and "Microsoft ecosystem" are semantic requirements
+because each can be supported by several related technologies.
 
 A job title such as Backend Developer should normally go into `roles`.
 
@@ -231,10 +240,6 @@ def parse_query(query: str) -> ParsedQuery:
 
     llm = _create_llm()
 
-    # ParsedQuery contains a flexible structured-value payload. OpenAI's
-    # strict JSON-schema response format rejects that free-form object shape;
-    # function calling still validates/coerces the returned data through
-    # ParsedQuery without sending an invalid response_format schema.
     structured_llm = llm.with_structured_output(
         ParsedQuery,
         method="function_calling",
