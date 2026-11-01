@@ -26,4 +26,7 @@ class ResumeData(BaseModel):
         default_factory=list
     )
 
+    # Calculated during normalization, not by the LLM
     total_experience_months: int = 0
+
+    professional_experience_months: int = 0

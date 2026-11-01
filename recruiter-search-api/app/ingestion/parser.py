@@ -347,7 +347,119 @@ GENERAL RESUME RULES
 
 65. If no valid skills are explicitly supported, return an empty
     skills list rather than guessing.
+
+66. Extract employment_type separately for every employment
+    experience when supported by the resume.
+
+67. Allowed employment types:
+    - FULL_TIME
+    - PART_TIME
+    - INTERNSHIP
+    - CONTRACT
+    - FREELANCE
+    - APPRENTICESHIP
+
+68. Identify employment type using explicit resume evidence.
+    For example:
+    - "Software Engineering Intern" → INTERNSHIP
+    - "Part-time Accountant" → PART_TIME
+    - "Freelance Designer" → FREELANCE
+    - "Contract Software Engineer" → CONTRACT
+
+69. Do not assume FULL_TIME merely because a job is listed.
+    Return null when employment type is unclear.
+
+70. Extract seniority_level separately for every employment
+    experience.
+
+71. Allowed seniority levels:
+    - JUNIOR
+    - MID_LEVEL
+    - SENIOR
+    - LEAD
+    - PRINCIPAL
+    - MANAGER
+    - DIRECTOR
+
+72. Determine seniority primarily from job title and explicit
+    responsibilities.
+
+73. Examples:
+    - Junior Software Engineer → JUNIOR
+    - Senior Software Engineer → SENIOR
+    - Technical Lead → LEAD
+    - Principal Architect → PRINCIPAL
+    - Engineering Manager → MANAGER
+    - HR Director → DIRECTOR
+
+74. Do not determine seniority from years of experience alone.
+    Seven years of experience does not automatically mean SENIOR.
+
+75. Do not assume an internship automatically establishes
+    a seniority level.
+
+76. If there is insufficient evidence to determine seniority,
+    return null.
+
+77. Never invent employment type or seniority.
 """
+
+
+
+
+DOMAIN_EXTRACTION_GUIDANCE = {
+    "TECHNICAL": """
+Focus on programming languages, frameworks, databases,
+cloud platforms, architecture, engineering responsibilities,
+technical projects and demonstrated technologies.
+""",
+
+    "SALES": """
+Focus on sales responsibilities, business development,
+lead generation, prospecting, account management,
+client acquisition, revenue generation and sales tools.
+""",
+
+    "MARKETING": """
+Focus on marketing campaigns, SEO, SEM, content,
+social media, branding, marketing analytics,
+audience growth and marketing platforms.
+""",
+
+    "HR": """
+Focus on recruitment, talent acquisition, screening,
+interview coordination, onboarding, HR operations,
+employee engagement and HR tools.
+""",
+
+    "FINANCE": """
+Focus on accounting, taxation, auditing, financial reporting,
+financial analysis, budgeting, compliance and finance tools.
+""",
+
+    "OPERATIONS": """
+Focus on operational processes, procurement, logistics,
+supply chain, vendor management, coordination
+and operational improvements.
+""",
+
+    "CUSTOMER_SUCCESS": """
+Focus on customer onboarding, retention, support,
+client relationships, issue resolution,
+customer satisfaction and CRM platforms.
+""",
+
+    "PRODUCT": """
+Focus on product strategy, product requirements,
+roadmaps, feature planning, user research,
+product analytics and product management.
+""",
+
+    "GENERAL": """
+Extract all explicitly supported professional information.
+Do not assume a specific professional domain.
+""",
+}
 
 
 def _create_llm() -> ChatOpenAI:
@@ -356,11 +468,25 @@ def _create_llm() -> ChatOpenAI:
     )
 
 
-def parse_resume(text: str) -> ResumeData:
+def parse_resume(
+    text: str,
+    primary_domain: str | None = None,
+) -> ResumeData:
     if not text or not text.strip():
         raise ValueError(
             "Resume text cannot be empty."
         )
+
+    domain = (
+        primary_domain.upper()
+        if primary_domain
+        else "GENERAL"
+    )
+
+    domain_guidance = DOMAIN_EXTRACTION_GUIDANCE.get(
+        domain,
+        DOMAIN_EXTRACTION_GUIDANCE["GENERAL"],
+    )
 
     llm = _create_llm()
 
@@ -433,6 +559,56 @@ When uncertain whether something is a genuine skill or merely
 a business noun/entity, prefer NOT extracting it.
 
 The goal is high-precision skill extraction.
+
+EMPLOYMENT AND SENIORITY EXTRACTION:
+
+For every employment experience, extract these two fields when
+supported by the resume:
+
+1. employment_type: choose one of the following values:
+   - FULL_TIME
+   - PART_TIME
+   - INTERNSHIP
+   - CONTRACT
+   - FREELANCE
+   - APPRENTICESHIP
+   - Return null when the employment type is not clear.
+
+2. seniority_level: choose one of the following values:
+   - JUNIOR
+   - MID_LEVEL
+   - SENIOR
+   - LEAD
+   - PRINCIPAL
+   - MANAGER
+   - DIRECTOR
+   - Return null when seniority is not supported by the job title
+     or responsibilities.
+
+Rules:
+- Classify each employment entry independently.
+- Use explicit employment wording for employment_type.
+- Do not assume a job is FULL_TIME just because it appears under
+  work experience.
+- Use the job title and responsibilities for seniority_level.
+- Do not infer seniority from total years of experience alone.
+- Do not assume that internship automatically means JUNIOR.
+- Do not confuse a technical/team lead title with people management
+  unless the responsibilities support that interpretation.
+- Never invent either value. Use null when evidence is insufficient.
+
+CLASSIFIED DOMAIN:
+{domain}
+
+DOMAIN-SPECIFIC EXTRACTION GUIDANCE:
+{domain_guidance}
+
+IMPORTANT:
+Domain-specific guidance should help identify relevant
+professional information.
+
+It must NOT override the strict extraction rules.
+Never invent information that is not present in the resume.
 
 RESUME:
 

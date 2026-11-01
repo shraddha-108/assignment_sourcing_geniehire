@@ -1201,9 +1201,29 @@ def validate_candidate(
             }
         ):
             structured_or_groups.setdefault(requirement.group_id, []).append(requirement)
+    positive_semantic_keys = {
+        _normalize(
+            str(item.value) if isinstance(item.value, str) else item.normalized_text
+        )
+        for item in requirements_graph
+        if not item.negated
+        and "semantic_evidence_retrieval" in item.capabilities
+    }
+    negated_semantic_keys = {
+        _normalize(
+            str(item.value) if isinstance(item.value, str) else item.normalized_text
+        )
+        for item in requirements_graph
+        if item.negated
+        and "semantic_evidence_retrieval" in item.capabilities
+    }
     independent_semantic_requirements = [
         requirement for requirement in semantic_requirements
         if _normalize(requirement) not in grouped_texts
+        and (
+            _normalize(requirement) not in negated_semantic_keys
+            or _normalize(requirement) in positive_semantic_keys
+        )
     ]
 
     handled_structured_or_groups = {}
@@ -1296,7 +1316,10 @@ def validate_candidate(
                 evidence=evidence,
             )
             alternative_results.append((alternative, passed, matches, matched_evidence))
-        group_matched = any(passed for _, passed, _, _ in alternative_results)
+        group_matched = any(
+            not passed if alternative.negated else passed
+            for alternative, passed, _, _ in alternative_results
+        )
         if not group_matched:
             structured_valid = False
             structured_failures.append({
@@ -1306,6 +1329,7 @@ def validate_candidate(
                 "reason": "No alternative in this requirement group matched the candidate profile",
             })
         for alternative, passed, matches, matched_evidence in alternative_results:
+            condition_passed = not passed if alternative.negated else passed
             alternative_type = matches[0].get("type") if matches else "structured"
             structured_matches.append({
                 **(matches[0] if matches else {
@@ -1318,10 +1342,76 @@ def validate_candidate(
                 "group_id": group_id,
                 "relationship": "OR",
                 "mandatory": True,
-                "matched": passed,
+                "matched": condition_passed,
+                "negated": alternative.negated,
+                "evidence": [] if alternative.negated else (
+                    matches[0].get("evidence", []) if matches else []
+                ),
             })
-            if passed:
+            if condition_passed and not alternative.negated:
                 structured_evidence.extend(matched_evidence)
+
+    for requirement in requirements_graph:
+        if (
+            not requirement.mandatory
+            or not requirement.negated
+            or (
+                requirement.group_id
+                and requirement.relationship.upper() == "OR"
+            )
+            or not set(requirement.capabilities) & {
+                "structured_candidate_lookup", "structured_experience_lookup"
+            }
+        ):
+            continue
+        field = (requirement.field or "").casefold()
+        value = requirement.value
+        if field in {"skill", "skills"} and isinstance(value, str):
+            requirement_filter = {"skills": [value]}
+        elif field in {"role", "roles"} and isinstance(value, str):
+            requirement_filter = {"roles": [value]}
+        elif field in {"company", "companies"} and isinstance(value, str):
+            requirement_filter = {"companies": [value]}
+        elif field == "location" and isinstance(value, str):
+            requirement_filter = {"location": value}
+        elif field in {"experience", "total_experience"} and isinstance(value, dict):
+            requirement_filter = {
+                "min_experience_years": value.get("min_experience_years"),
+                "max_experience_years": value.get("max_experience_years"),
+            }
+        elif field in {"min_experience_years", "max_experience_years"} and value is not None:
+            requirement_filter = {field: value}
+        else:
+            requirement_filter = {}
+        if not requirement_filter:
+            continue
+        excluded, _, exclusion_matches, _ = validate_structured_requirements(
+            db=db,
+            candidate_id=candidate_id,
+            requirements=requirement_filter,
+            evidence=evidence,
+        )
+        matched = not excluded
+        structured_matches.extend({
+            **match,
+            "requirement_id": requirement.id,
+            "requirement": requirement.original_text,
+            "matched": matched,
+            "negated": True,
+            "mandatory": True,
+            "evidence": [],
+        } for match in exclusion_matches[:1] or [{
+            "type": field.rstrip("s"),
+            "candidate_value": None,
+        }])
+        if excluded:
+            structured_valid = False
+            structured_failures.append({
+                "type": "STRUCTURED_NOT",
+                "requirement_id": requirement.id,
+                "required": requirement.original_text,
+                "reason": "Candidate matched an explicitly excluded requirement",
+            })
     soft_requirement_matches = []
     for requirement in requirements_graph:
         if requirement.mandatory or not set(requirement.capabilities) & {
@@ -1397,6 +1487,15 @@ def validate_candidate(
                 alternative.value if isinstance(alternative.value, str)
                 else alternative.normalized_text
             )
+            if alternative.negated:
+                excluded, _, _, _ = validate_semantic_requirements(
+                    candidate_id=candidate_id,
+                    semantic_requirements=[text],
+                    evidence=evidence,
+                )
+                if not excluded and best is None:
+                    best = (0.0, alternative, None)
+                continue
             for item in evidence:
                 sentence = _supports_semantic_requirement(
                     text,
@@ -1411,7 +1510,8 @@ def validate_candidate(
                             "requirement": text, "requirement_id": alternative.id,
                             "group_id": group_id, "semantic_support_score": score})
         if best:
-            supporting_evidence.append(best[2])
+            if best[2] is not None:
+                supporting_evidence.append(best[2])
             for alternative in alternatives:
                 matched_requirements.append({
                     "type": "semantic", "requirement_id": alternative.id,
@@ -1419,7 +1519,12 @@ def validate_candidate(
                     "requirement": alternative.original_text,
                     "matched": alternative.id == best[1].id,
                     "relationship": "OR", "mandatory": alternative.mandatory,
-                    "evidence": [best[2]] if alternative.id == best[1].id else [],
+                    "negated": alternative.negated,
+                    "evidence": (
+                        [best[2]]
+                        if alternative.id == best[1].id and best[2] is not None
+                        else []
+                    ),
                 })
         else:
             is_mandatory = any(alternative.mandatory for alternative in alternatives)
@@ -1434,7 +1539,8 @@ def validate_candidate(
                 "type": "semantic", "requirement_id": alternative.id,
                 "group_id": group_id, "requirement": alternative.original_text,
                 "matched": False, "relationship": "OR",
-                "mandatory": alternative.mandatory, "evidence": [],
+                "mandatory": alternative.mandatory, "negated": alternative.negated,
+                "evidence": [],
             } for alternative in alternatives)
 
     for group_id, alternatives in mixed_or_groups.items():
@@ -1447,11 +1553,12 @@ def validate_candidate(
             alternative_evidence = []
             if "semantic_evidence_retrieval" in alternative.capabilities:
                 text = alternative.value if isinstance(alternative.value, str) else alternative.normalized_text
-                passed, _, alternative_evidence, matches = validate_semantic_requirements(
+                matched, _, alternative_evidence, matches = validate_semantic_requirements(
                     candidate_id=candidate_id,
                     semantic_requirements=[text],
                     evidence=evidence,
                 )
+                passed = not matched if alternative.negated else matched
             else:
                 field = (alternative.field or "").casefold()
                 value = alternative.value
@@ -1467,14 +1574,16 @@ def validate_candidate(
                 else:
                     requirement_filter = {}
                 if requirement_filter:
-                    passed, _, matches, alternative_evidence = validate_structured_requirements(
+                    matched, _, matches, alternative_evidence = validate_structured_requirements(
                         db=db, candidate_id=candidate_id,
                         requirements=requirement_filter, evidence=evidence,
                     )
+                    passed = not matched if alternative.negated else matched
             group_passed = group_passed or passed
-            group_matches.extend(alternative_evidence)
+            if passed and not alternative.negated:
+                group_matches.extend(alternative_evidence)
             selected = matches[0] if matches else {}
-            if selected.get("evidence"):
+            if passed and not alternative.negated and selected.get("evidence"):
                 group_matches.extend(selected["evidence"])
             matched_requirements.append({
                 **selected,
@@ -1485,7 +1594,12 @@ def validate_candidate(
                 "matched": passed,
                 "relationship": "OR",
                 "mandatory": True,
-                "evidence": selected.get("evidence", alternative_evidence if passed else []),
+                "negated": alternative.negated,
+                "evidence": (
+                    []
+                    if alternative.negated
+                    else selected.get("evidence", alternative_evidence if passed else [])
+                ),
             })
         if not group_passed:
             semantic_failures.append({
@@ -1496,6 +1610,48 @@ def validate_candidate(
             })
         else:
             supporting_evidence.extend(group_matches)
+
+    grouped_negated_ids = {
+        item.id
+        for alternatives in all_or_groups.values()
+        for item in alternatives
+        if item.negated
+    }
+    for requirement in requirements_graph:
+        if (
+            not requirement.mandatory
+            or not requirement.negated
+            or requirement.id in grouped_negated_ids
+            or "semantic_evidence_retrieval" not in requirement.capabilities
+        ):
+            continue
+        text = (
+            requirement.value
+            if isinstance(requirement.value, str)
+            else requirement.normalized_text
+        )
+        excluded, _, _, _ = validate_semantic_requirements(
+            candidate_id=candidate_id,
+            semantic_requirements=[text],
+            evidence=evidence,
+        )
+        matched = not excluded
+        matched_requirements.append({
+            "type": "semantic",
+            "requirement_id": requirement.id,
+            "requirement": requirement.original_text,
+            "matched": matched,
+            "negated": True,
+            "mandatory": True,
+            "evidence": [],
+        })
+        if excluded:
+            semantic_failures.append({
+                "type": "SEMANTIC_NOT",
+                "requirement_id": requirement.id,
+                "required": requirement.original_text,
+                "reason": "Resume evidence matched an explicitly excluded requirement",
+            })
 
     semantic_valid = not semantic_failures
     for requirement in requirements_graph:
@@ -1595,101 +1751,49 @@ def validate_candidate(
         item.get("requirement_id"): item.get("matched")
         for item in legacy_requirement_decisions
     }
-    candidate_semantic_failures = []
-    candidate_semantic_valid = True
+    # Candidate-level CrossEncoder is a ranking signal only.
+    # It must not independently approve or reject a candidate.
+    candidate_semantic_valid = None
+
     if candidate_semantic_scores is not None:
         semantic_nodes = [
             item for item in requirements_graph
-            if item.mandatory and "semantic_evidence_retrieval" in item.capabilities
+            if item.mandatory
+            and not item.negated
+            and "semantic_evidence_retrieval" in item.capabilities
         ]
-        semantic_groups: dict[str, list] = {}
         nodes_by_id = {item.id: item for item in semantic_nodes}
-        semantic_group_passes: dict[str, bool] = {}
-        independent_nodes = []
-        for node in semantic_nodes:
-            if node.group_id and node.relationship.upper() == "OR":
-                semantic_groups.setdefault(node.group_id, []).append(node)
-            else:
-                independent_nodes.append(node)
 
         def node_score(node):
-            value = node.value if isinstance(node.value, str) else node.normalized_text
-            return candidate_semantic_scores.get(_normalize(value),
-                candidate_semantic_scores.get(_normalize(node.original_text)))
-
-        stage_two_passes = [
-            node_score(node) is not None
-            and float(node_score(node)) >= candidate_semantic_min_score
-            for node in independent_nodes
-        ]
-        for alternatives in semantic_groups.values():
-            group_scores = [node_score(node) for node in alternatives]
-            semantic_group_passed = any(
-                score is not None and float(score) >= candidate_semantic_min_score
-                for score in group_scores
+            value = (
+                node.value
+                if isinstance(node.value, str)
+                else node.normalized_text
             )
-            group_id = alternatives[0].group_id
-            structured_group_passed = any(
-                match.get("group_id") == group_id
-                and match.get("type") != "semantic"
-                and match.get("matched")
-                for match in matched_requirements
+            return candidate_semantic_scores.get(
+                _normalize(value),
+                candidate_semantic_scores.get(_normalize(node.original_text)),
             )
-            group_passed = semantic_group_passed or structured_group_passed
-            semantic_group_passes[group_id] = group_passed
-            stage_two_passes.append(group_passed)
-        if semantic_nodes:
-            candidate_semantic_valid = all(stage_two_passes)
 
         for match in matched_requirements:
-            if match.get("type") != "semantic":
+            if match.get("type") != "semantic" or match.get("negated"):
                 continue
+
             requirement_text = str(match.get("requirement") or "")
-            score = candidate_semantic_scores.get(_normalize(requirement_text))
-            passed = score is not None and float(score) >= candidate_semantic_min_score
+            node = nodes_by_id.get(match.get("requirement_id"))
+            score = node_score(node) if node else None
+
+            if score is None:
+                score = candidate_semantic_scores.get(
+                    _normalize(requirement_text)
+                )
+
             match["candidate_reranker_score"] = score
             match["candidate_reranker_threshold"] = candidate_semantic_min_score
-            match["candidate_validated"] = passed
-            if match.get("matched") and not passed:
-                match["matched"] = False
-                node = nodes_by_id.get(match.get("requirement_id"))
-                group_passed = bool(
-                    node and node.group_id and node.relationship.upper() == "OR"
-                    and semantic_group_passes.get(node.group_id)
-                )
-                if group_passed:
-                    continue
-                candidate_semantic_valid = False
-                candidate_semantic_failures.append({
-                    "type": "CANDIDATE_SEMANTIC",
-                    "requirement_id": match.get("requirement_id"),
-                    "group_id": match.get("group_id"),
-                    "required": requirement_text,
-                    "candidate_reranker_score": score,
-                    "threshold": candidate_semantic_min_score,
-                    "reason": (
-                        "Candidate-level evidence score was below the configured relevance threshold."
-                        if score is not None else
-                        "No candidate-level evidence score was available for this requirement."
-                    ),
-                })
-        for group_id, alternatives in semantic_groups.items():
-            if not semantic_group_passes.get(group_id):
-                continue
-            passing_nodes = [node for node in alternatives
-                if node_score(node) is not None
-                and float(node_score(node)) >= candidate_semantic_min_score]
-            if not passing_nodes:
-                continue
-            best_node = max(passing_nodes, key=lambda node: float(node_score(node)))
-            selected_match = next((match for match in matched_requirements
-                if match.get("requirement_id") == best_node.id), None)
-            if selected_match:
-                selected_match["matched"] = True
-                selected_match["candidate_validated"] = True
-        if candidate_semantic_failures:
-            semantic_valid = False
-            semantic_failures.extend(candidate_semantic_failures)
+            match["candidate_score_above_threshold"] = (
+                score is not None
+                and float(score) >= candidate_semantic_min_score
+            )
 
     evidence_validation_duration = perf_counter() - evidence_validation_started
 

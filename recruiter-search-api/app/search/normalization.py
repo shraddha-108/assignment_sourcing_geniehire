@@ -135,6 +135,16 @@ def industry_evidence_matches(text: str, requirement: str) -> bool:
     )
 
 
+def canonicalize_semantic_requirement(requirement: str) -> str:
+    """Keep retrieval wording stable for singular and plural ML project requests."""
+    return re.sub(
+        r"\b(machine[- ]learning|deep[- ]learning|ml)\s+projects?\b",
+        lambda match: f"{match.group(1)} projects",
+        requirement,
+        flags=re.IGNORECASE,
+    )
+
+
 def _alias_group(value: str, kind: str) -> tuple[str, ...]:
     normalized = normalize_phrase(value)
     groups = _ROLE_GROUPS if kind == "role" else _SKILL_GROUPS if kind == "skill" else ()
@@ -229,6 +239,7 @@ def explicit_soft_requirement_ids(query: str, requirements: list) -> set[str]:
 
 def expand_semantic_requirement(requirement: str) -> str:
     """Add related retrieval language while retaining the intact requirement."""
+    requirement = canonicalize_semantic_requirement(requirement)
     expansions: list[str] = []
     for concept, synonyms in _SEMANTIC_CONCEPTS.items():
         pattern = _SEMANTIC_CONCEPT_PATTERNS.get(
@@ -372,6 +383,88 @@ def normalize_explicit_semantic_or(query: str, requirements: list, semantic_requ
         value for value in semantic_requirements
         if normalize_phrase(value) != normalize_phrase(node.value)
     ] + alternatives
+
+
+def apply_explicit_boolean_operators(query: str, requirements: list) -> None:
+    """Apply explicit OR and NOT connectors between parsed requirement spans."""
+    mentions = []
+    for requirement in requirements:
+        probes = [
+            str(requirement.value) if isinstance(requirement.value, str) else "",
+            requirement.original_text,
+            requirement.normalized_text,
+        ]
+        matches = []
+        structured = bool(set(requirement.capabilities) & {
+            "structured_candidate_lookup", "structured_experience_lookup"
+        })
+        has_boolean_clause = structured and any(
+            re.search(r"\b(?:and|or)\b", probe, re.IGNORECASE)
+            for probe in probes
+        )
+        if structured:
+            probes.extend(
+                clause
+                for probe in tuple(probes)
+                for clause in re.split(r"\b(?:and|or)\b", probe, flags=re.IGNORECASE)
+            )
+        for probe in dict.fromkeys(probe.strip(" ,.;") for probe in probes if probe.strip()):
+            if re.search(r"\b(?:and|or)\b", probe, re.IGNORECASE):
+                continue
+            pattern = re.escape(probe.strip())
+            pattern = re.sub(r"\\ ", r"\\s+", pattern)
+            match = re.search(
+                rf"(?<![\w+#]){pattern}(?![\w+#])",
+                query,
+                re.IGNORECASE,
+            )
+            if match:
+                matches.append(match)
+        if matches:
+            match = (
+                min(matches, key=lambda item: item.start())
+                if has_boolean_clause
+                else max(matches, key=lambda item: (item.end() - item.start(), -item.start()))
+            )
+            mentions.append((match.start(), match.end(), requirement))
+
+    mentions.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+    non_overlapping = []
+    for mention in mentions:
+        if non_overlapping and mention[0] < non_overlapping[-1][1]:
+            continue
+        non_overlapping.append(mention)
+
+    for index, (start, end, requirement) in enumerate(non_overlapping):
+        prefix = query[max(0, start - 32):start]
+        if re.search(r"\b(?:not\s+only)\s*$", prefix, re.IGNORECASE):
+            continue
+        if re.search(r"\b(?:not|without|excluding|except)\s*$", prefix, re.IGNORECASE):
+            requirement.negated = True
+
+        if index == 0:
+            continue
+        previous_start, previous_end, previous = non_overlapping[index - 1]
+        connector = query[previous_end:start]
+        if re.search(r"\b(?:not\s+only)\b", connector, re.IGNORECASE):
+            continue
+        if re.search(r"\b(?:and\s+)?(?:but\s+)?(?:not|without|excluding|except)\b", connector, re.IGNORECASE):
+            requirement.negated = True
+            if not re.search(r"\bor\b", connector, re.IGNORECASE):
+                continue
+
+        if not re.search(r"\bor\b", connector, re.IGNORECASE):
+            continue
+
+        group_id = (
+            previous.group_id
+            if previous.relationship.upper() == "OR" and previous.group_id
+            else f"explicit_or_{previous.id}"
+        )
+        previous.group_id = group_id
+        previous.relationship = "OR"
+        requirement.group_id = group_id
+        requirement.relationship = "OR"
 
 
 def parse_explicit_experience_bounds(query: str) -> dict | None:

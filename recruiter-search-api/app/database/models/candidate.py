@@ -63,6 +63,11 @@ class Candidate(Base):
         default=0,
         nullable=False,
     )
+    professional_experience_months: Mapped[int] = mapped_column(
+    Integer,
+    default=0,
+    nullable=False,
+)
 
     linkedin_url: Mapped[str | None] = mapped_column(
         String(500),

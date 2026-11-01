@@ -15,7 +15,11 @@ from app.database.models.skill import Skill
 from app.database.location_utils import location_matches
 
 from app.ingestion.vector.retrieval import retrieve_semantic_candidates
-from app.search.normalization import equivalent_terms, expand_semantic_requirement
+from app.search.normalization import (
+    canonicalize_semantic_requirement,
+    equivalent_terms,
+    expand_semantic_requirement,
+)
 
 
 STRUCTURED_RETRIEVAL_LIMIT = int(
@@ -392,6 +396,7 @@ def retrieve_semantic(
 
     for requirement in requirements:
         requirement_text = str(requirement["value"])
+        reranker_query = canonicalize_semantic_requirement(requirement_text)
         hits = retrieve_semantic_candidates(
             query=requirement["evidence_query"],
             limit=per_requirement_limit,
@@ -408,7 +413,7 @@ def retrieve_semantic(
                 existing = {
                     **item,
                     "retrieval_requirements": [requirement_text],
-                    "reranker_query": requirement_text,
+                    "reranker_query": reranker_query,
                 }
                 evidence_by_key[key] = existing
             else:

@@ -1,6 +1,14 @@
+
 from datetime import date
 
-from sqlalchemy import Boolean, Date, ForeignKey, Integer, Text
+from sqlalchemy import (
+    Boolean,
+    Date,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -50,6 +58,18 @@ class Experience(Base):
         Integer,
         default=0,
         nullable=False,
+    )
+
+    # Employment classification
+    employment_type: Mapped[str | None] = mapped_column(
+        String(30),
+        index=True,
+    )
+
+    # Seniority associated with this particular job
+    seniority_level: Mapped[str | None] = mapped_column(
+        String(30),
+        index=True,
     )
 
     description: Mapped[str | None] = mapped_column(

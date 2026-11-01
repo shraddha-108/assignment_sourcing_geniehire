@@ -15,6 +15,7 @@ from app.database.models.project_skill import ProjectSkill
 from app.database.models.resume_section import ResumeSection
 from app.database.location_utils import format_candidate_location
 from app.search.normalization import (
+    canonicalize_semantic_requirement,
     equivalent_terms,
     industry_evidence_matches,
     industry_evidence_terms,
@@ -127,7 +128,7 @@ def _build_candidate_validation_inputs(
             candidate_inputs.append({
                 "candidate_id": consolidated["candidate_id"],
                 "requirement": requirement,
-                "reranker_query": requirement,
+                "reranker_query": canonicalize_semantic_requirement(requirement),
                 "text": evidence_text,
                 "evidence": chunks,
                 "retrieval_score": max(
@@ -188,18 +189,38 @@ def _structured_filter_for_requirement(requirement) -> dict:
 
 
 def _mixed_structured_or_branches(requirements: list, base_filter: dict) -> list[dict] | None:
-    groups = _structured_or_groups(requirements)
+    groups: dict[str, list] = {}
+    for requirement in requirements:
+        if (
+            requirement.group_id
+            and requirement.relationship.upper() == "OR"
+            and requirement.mandatory
+        ):
+            groups.setdefault(requirement.group_id, []).append(requirement)
     mixed_groups = []
-    for group in groups:
-        options = [_structured_filter_for_requirement(item) for item in group]
+    for members in groups.values():
+        structured_members = [
+            item for item in members
+            if set(item.capabilities) & {
+                "structured_candidate_lookup", "structured_experience_lookup"
+            }
+        ]
+        options = [
+            _structured_filter_for_requirement(item)
+            for item in structured_members
+        ]
         options = [option for option in options if option]
         fields = {field for option in options for field, value in option.items() if value is not None}
-        needs_branch = len(fields) > 1 or any(
+        has_semantic_alternative = any(
+            "semantic_evidence_retrieval" in item.capabilities
+            for item in members
+        )
+        needs_branch = has_semantic_alternative or len(fields) > 1 or any(
             field not in {"skills", "roles", "companies"}
             for option in options for field, value in option.items() if value is not None
         )
-        if len(options) == len(group) and needs_branch:
-            mixed_groups.append((group, options))
+        if structured_members and len(options) == len(structured_members) and needs_branch:
+            mixed_groups.append((structured_members, options))
     if not mixed_groups:
         return None
 
@@ -589,7 +610,7 @@ def execute_search(
         hard_semantic_requirements = []
         for requirement in requirements:
             value = requirement.value
-            if requirement.mandatory and set(requirement.capabilities) & {
+            if requirement.mandatory and not requirement.negated and set(requirement.capabilities) & {
                 "structured_candidate_lookup", "structured_experience_lookup"
             }:
                 field = requirement.field
@@ -627,7 +648,7 @@ def execute_search(
                 )
                 if semantic_text:
                     graph_semantic.append(semantic_text)
-                    if requirement.mandatory:
+                    if requirement.mandatory and not requirement.negated:
                         hard_semantic_requirements.append(semantic_text)
         semantic_requirements = graph_semantic
 
@@ -644,6 +665,7 @@ def execute_search(
     )
     graph_has_structured_hard = not has_mixed_structured_semantic_or and any(
         requirement.type == "STRUCTURED" and requirement.mandatory
+        and not requirement.negated
         and not (requirement.group_id and requirement.relationship.upper() == "OR")
         and bool(set(requirement.capabilities) & {
             "structured_candidate_lookup", "structured_experience_lookup"
@@ -679,11 +701,31 @@ def execute_search(
         structured_requirements,
     )
 
+    has_positive_requirement = any(
+        requirement.mandatory and not requirement.negated
+        for requirement in requirements
+    )
+    needs_complete_candidate_pool = (
+        not has_positive_requirement
+        or any(
+            requirement.negated
+            and requirement.group_id
+            and requirement.relationship.upper() == "OR"
+            for requirement in requirements
+        )
+    )
     if requires_structured and (
         any(structured_requirements.values())
         or not requires_semantic
+        or needs_complete_candidate_pool
+        or structured_branches
     ):
-        if structured_branches:
+        if needs_complete_candidate_pool:
+            structured_results = retrieve_structured_candidates(
+                db=db,
+                requirements={},
+            )
+        elif structured_branches:
             structured_by_candidate = {}
             for branch in structured_branches:
                 for item in retrieve_structured_candidates(
@@ -697,6 +739,11 @@ def execute_search(
                 db=db,
                 requirements=structured_requirements,
             )
+    elif needs_complete_candidate_pool:
+        structured_results = retrieve_structured_candidates(
+            db=db,
+            requirements={},
+        )
 
     structured_candidate_ids = (
         _candidate_ids_from_structured(

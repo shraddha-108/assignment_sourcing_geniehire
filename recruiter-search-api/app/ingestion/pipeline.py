@@ -1,3 +1,4 @@
+
 from pathlib import Path
 from datetime import datetime
 
@@ -6,6 +7,16 @@ from sqlalchemy.orm import Session
 from app.database.models.ingestion_run import IngestionRun
 
 from app.ingestion.extractor import extract_text
+
+from app.ingestion.classification_input_builder import (
+    build_classification_input,
+)
+
+from app.ingestion.classifier import (
+    classify_resume,
+    CLASSIFICATION_VERSION,
+)
+
 from app.ingestion.parser import parse_resume
 from app.ingestion.normalizer import normalize_resume
 from app.ingestion.validator import validate_resume
@@ -40,7 +51,11 @@ def ingest_resume(
             ↓
         Text extraction
             ↓
-        LLM parsing
+        Classification input preparation
+            ↓
+        Resume domain classification (GPT-6 Luna)
+            ↓
+        Domain-guided resume extraction (GPT-6 Luna)
             ↓
         Normalization
             ↓
@@ -109,7 +124,7 @@ def ingest_resume(
     )
 
     # ==================================================
-    # 3. Extract
+    # 3. Extract complete resume text
     # ==================================================
 
     print("[3/8] Extracting resume text...")
@@ -132,8 +147,7 @@ def ingest_resume(
     except Exception:
 
         # Extraction failed after S3 upload.
-        # Remove the uploaded object so S3 does not
-        # contain a resume that was never ingested.
+        # Remove the uploaded object.
 
         try:
             delete_resume(storage_key)
@@ -143,15 +157,76 @@ def ingest_resume(
         raise
 
     # ==================================================
-    # 4. Parse
+    # 4. Classification + Detailed Parsing
     # ==================================================
-
-    print("[4/8] Parsing resume with LLM...")
 
     try:
 
-        resume_data = parse_resume(
+        # ----------------------------------------------
+        # 4A. Build classification input
+        # ----------------------------------------------
+
+        print(
+            "[4A] Preparing classification input..."
+        )
+
+        classification_text = build_classification_input(
             text
+        )
+
+        if not classification_text.strip():
+            raise ValueError(
+                "Classification input is empty."
+            )
+
+        print(
+            f"      Classification input: "
+            f"{len(classification_text)} characters."
+        )
+
+        # ----------------------------------------------
+        # 4B. Classify resume
+        # ----------------------------------------------
+
+        print(
+            "[4B] Classifying resume with GPT-6 Luna..."
+        )
+
+        classification = classify_resume(
+            classification_text
+        )
+
+        primary_domain = (
+            classification.primary_domain.value
+        )
+
+        domain_confidence = (
+            classification.confidence
+        )
+
+        print(
+            f"      Primary domain: {primary_domain}"
+        )
+
+        print(
+            f"      Confidence: {domain_confidence:.2f}"
+        )
+
+        # ----------------------------------------------
+        # 4C. Detailed resume extraction
+        # ----------------------------------------------
+
+        print(
+            "[4C] Parsing complete resume with GPT-6 Luna..."
+        )
+
+        # IMPORTANT:
+        # Send the COMPLETE raw resume text.
+        # Only the domain-specific guidance changes.
+
+        resume_data = parse_resume(
+            text,
+            primary_domain=primary_domain,
         )
 
         print(
@@ -160,6 +235,9 @@ def ingest_resume(
         )
 
     except Exception:
+
+        # Classification or parsing failed.
+        # Remove the uploaded S3 object.
 
         try:
             delete_resume(storage_key)
@@ -229,6 +307,11 @@ def ingest_resume(
             file_hash=file_hash,
             file_type=file_path.suffix.lower(),
             file_size=file_path.stat().st_size,
+
+            # Resume classification metadata
+            primary_domain=primary_domain,
+            domain_confidence=domain_confidence,
+            classification_version=CLASSIFICATION_VERSION,
         )
 
         print(
@@ -293,6 +376,8 @@ def ingest_resume(
             "resume_id": resume.id,
             "ingestion_run_id": ingestion_run.id,
             "storage_key": storage_key,
+            "primary_domain": primary_domain,
+            "domain_confidence": domain_confidence,
             "indexed_evidence_count": indexed_count,
             "status": "COMPLETED",
         }
@@ -315,19 +400,8 @@ def ingest_resume(
         except Exception:
             pass
 
-        # Remove PostgreSQL records created for this
-        # candidate.
-        #
-        # This assumes your reset/re-ingestion workflow
-        # is operating on a clean database and that
-        # cascading relationships are configured.
-        #
-        # If you want transactional rollback of the
-        # complete candidate tree, we should refactor
-        # persist_candidate to avoid its internal commit.
-        #
-        # For now we keep the failed ingestion visible
-        # through ingestion_run.
+        # Existing PostgreSQL cleanup behaviour is preserved.
+        # A future transaction refactor can make this atomic.
 
         raise
 

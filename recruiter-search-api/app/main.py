@@ -290,7 +290,11 @@ def search_candidates(
                 for item in specification.requirements
             ],
 
-            "exclusions": [],
+            "exclusions": [
+                item.original_text
+                for item in specification.requirements
+                if item.negated
+            ],
         }
 
         # ----------------------------------------------------

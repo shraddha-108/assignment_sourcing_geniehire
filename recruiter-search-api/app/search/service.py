@@ -5,6 +5,7 @@ from app.search.classifier import classify_query
 from app.search.requirements import normalize_requirement_graph
 from app.search.normalization import (
     _FAMILY_QUERY_PATTERNS,
+    apply_explicit_boolean_operators,
     canonical_term,
     equivalent_terms,
     ensure_semantic_family_requirements,
@@ -49,7 +50,7 @@ def build_routing_packet(query: str) -> RoutingPacket:
     family_assumptions = ensure_semantic_family_requirements(query, parsed_query)
 
     explicit_skill = re.search(
-        r"\bknows?\s+(?P<skill>[^,;.!?]+?)(?=\s+and\s+|\s*[?.!]*$)",
+        r"\bknows?\s+(?P<skill>[^,;.!?]+?)(?=\s+(?:and|or)\s+|\s*[?.!]*$)",
         query,
         re.IGNORECASE,
     )
@@ -523,6 +524,8 @@ def build_routing_packet(query: str) -> RoutingPacket:
                 confidence=0.75,
             ))
 
+    _normalize_compound_structured_skills(parsed_query.skills, requirements)
+    _deduplicate_structured_skill_requirements(requirements)
     _normalize_explicit_structured_skill_or(query, requirements)
 
     parsed_query.semantic_requirements = normalize_explicit_semantic_or(
@@ -530,6 +533,7 @@ def build_routing_packet(query: str) -> RoutingPacket:
         requirements,
         parsed_query.semantic_requirements,
     )
+    apply_explicit_boolean_operators(query, requirements)
 
     # Fill abstract capabilities for requirements supplied by an LLM that
     # omitted them; preserve all parsed fields and dependencies.
@@ -624,6 +628,111 @@ def build_routing_packet(query: str) -> RoutingPacket:
         structured_requirements=structured_requirements,
         semantic_requirements=specification.semantic_requirements,
     )
+
+
+def _deduplicate_structured_skill_requirements(
+    requirements: list[SearchRequirement],
+) -> None:
+    """Keep one graph node when the parser repeats the same structured skill."""
+    seen: dict[str, SearchRequirement] = {}
+    duplicates = []
+    for requirement in requirements:
+        if not (
+            set(requirement.capabilities) & {
+                "structured_candidate_lookup", "structured_experience_lookup"
+            }
+            and (
+                (requirement.field or "").casefold() in {"skill", "skills"}
+                or (requirement.source_of_truth or "").casefold() == "candidate_skill"
+            )
+        ):
+            continue
+        raw_value = (
+            requirement.value
+            if isinstance(requirement.value, str)
+            else requirement.normalized_text or requirement.original_text
+        )
+        skill = re.sub(
+            r"^(?:(?:knows?|has|uses?|is\s+familiar\s+with|familiar\s+with|"
+            r"has\s+experience\s+with|experience\s+with)\s+)+",
+            "",
+            str(raw_value),
+            flags=re.IGNORECASE,
+        ).strip()
+        key = canonical_term(skill, "skill")
+        if not key:
+            continue
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = requirement
+            continue
+        if requirement.field and not existing.field:
+            requirement.group_id = existing.group_id
+            requirement.relationship = existing.relationship
+            requirement.negated = existing.negated
+            seen[key] = requirement
+            duplicates.append(existing)
+        else:
+            duplicates.append(requirement)
+    if duplicates:
+        requirements[:] = [
+            requirement for requirement in requirements
+            if requirement not in duplicates
+        ]
+
+
+def _normalize_compound_structured_skills(
+    parsed_skills: list[str],
+    requirements: list[SearchRequirement],
+) -> None:
+    """Repair skill nodes that swallowed a neighboring boolean search clause."""
+    known_skills = {
+        canonical_term(skill, "skill"): skill.strip()
+        for skill in parsed_skills
+        if skill.strip()
+        and not re.search(r"\b(?:and|or|not)\b", skill, re.IGNORECASE)
+    }
+    for requirement in requirements:
+        if (
+            (requirement.field or "").casefold() not in {"skill", "skills"}
+            or not isinstance(requirement.value, str)
+            or not re.search(r"\b(?:and|or|not)\b", requirement.value, re.IGNORECASE)
+        ):
+            continue
+        for other in requirements:
+            if (
+                other is requirement
+                or (other.field or "").casefold() not in {"skill", "skills"}
+                or not isinstance(other.value, str)
+                or re.search(r"\b(?:and|or|not)\b", other.value, re.IGNORECASE)
+            ):
+                continue
+            known_skills.setdefault(
+                canonical_term(other.value, "skill"),
+                other.value.strip(),
+            )
+
+        mentioned = [
+            skill
+            for skill in known_skills.values()
+            if re.search(
+                rf"(?<![\w+#]){re.escape(skill)}(?![\w+#])",
+                requirement.value,
+                re.IGNORECASE,
+            )
+        ]
+        unique_mentions = {
+            canonical_term(skill, "skill"): skill for skill in mentioned
+        }
+        if len(unique_mentions) != 1:
+            continue
+
+        skill = next(iter(unique_mentions.values()))
+        requirement.value = skill
+        requirement.original_text = skill
+        requirement.normalized_text = normalize_phrase(skill)
+        requirement.canonical_value = canonical_term(skill, "skill")
+        requirement.equivalent_terms = equivalent_terms(skill, "skill")
 
 
 def _normalize_explicit_structured_skill_or(

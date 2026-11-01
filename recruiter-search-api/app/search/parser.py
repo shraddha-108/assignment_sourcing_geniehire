@@ -130,7 +130,7 @@ Extraction rules:
    separate LangChain requirement; do not create one combined semantic phrase.
    For each requirement provide id, original_text, normalized_text, type,
    mandatory, match_mode, source_of_truth, capabilities, dependencies, relationship,
-   related_requirements, group_id, and
+   related_requirements, group_id, negated, and
    confidence when useful. Use only the requirement type needed to describe
    meaning: STRUCTURED, SEMANTIC, TEMPORAL, RELATIONAL, or COMPOSITE.
    Capabilities are abstract names, such as structured_candidate_lookup,
@@ -147,6 +147,11 @@ Extraction rules:
    expresses a preference, such as preferably, ideally, nice to have, bonus,
    or plus. Otherwise use HARD. Do not infer softness from semantic type and do
    not invent requirements.
+   Preserve explicit boolean logic: AND means every requirement must match;
+   OR means at least one alternative in a shared group_id must match; NOT,
+   "not", "excluding", "except", and "without" mark the excluded requirement
+   with negated=true. Do not turn a negated requirement into a positive filter.
+   Requirements not joined by explicit OR are conjunctive by default.
    Every TEMPORAL requirement must include temporal_window_months when the
    request provides or implies a usable time window. For a vague recency
    preference such as "recently", use a conventional 12-month interpretation

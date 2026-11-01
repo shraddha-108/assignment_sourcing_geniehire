@@ -27,17 +27,28 @@ _PROTECTED_TERMS = {
 
 
 def _edit_distance(left: str, right: str) -> int:
-    previous = list(range(len(right) + 1))
+    distance = [
+        [row + column for column in range(len(right) + 1)]
+        for row in range(len(left) + 1)
+    ]
     for row, left_char in enumerate(left, start=1):
-        current = [row]
         for column, right_char in enumerate(right, start=1):
-            current.append(min(
-                current[-1] + 1,
-                previous[column] + 1,
-                previous[column - 1] + (left_char != right_char),
-            ))
-        previous = current
-    return previous[-1]
+            distance[row][column] = min(
+                distance[row - 1][column] + 1,
+                distance[row][column - 1] + 1,
+                distance[row - 1][column - 1] + (left_char != right_char),
+            )
+            if (
+                row > 1
+                and column > 1
+                and left_char == right[column - 2]
+                and left[row - 2] == right_char
+            ):
+                distance[row][column] = min(
+                    distance[row][column],
+                    distance[row - 2][column - 2] + 1,
+                )
+    return distance[-1][-1]
 
 
 def suggest_query_correction(query: str) -> str | None:

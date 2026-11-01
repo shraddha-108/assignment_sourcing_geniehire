@@ -1,3 +1,4 @@
+
 from datetime import date
 
 from app.ingestion.schemas.resume import ResumeData
@@ -38,7 +39,8 @@ def calculate_months(
     end_date: date,
 ) -> int:
     """
-    Calculate experience duration in complete months.
+    Calculate experience duration in months
+    using the difference between calendar months.
     """
 
     if end_date < start_date:
@@ -53,12 +55,16 @@ def calculate_months(
     )
 
 
-def calculate_total_experience_months(
+def _calculate_experience_months(
     resume: ResumeData,
+    exclude_internships: bool = False,
 ) -> int:
     """
-    Calculate total professional experience while
-    avoiding double-counting overlapping jobs.
+    Calculate experience months while avoiding
+    double-counting overlapping employment periods.
+
+    When exclude_internships=True, only experiences
+    explicitly classified as INTERNSHIP are excluded.
     """
 
     intervals: list[tuple[date, date]] = []
@@ -70,9 +76,21 @@ def calculate_total_experience_months(
         if not experience.start_date:
             continue
 
+        # Exclude explicitly classified internships
+        # when calculating professional experience.
+        employment_type = (
+            experience.employment_type or ""
+        ).upper()
+
+        if (
+            exclude_internships
+            and employment_type == "INTERNSHIP"
+        ):
+            continue
+
         start = experience.start_date
 
-        # Current job
+        # Current employment
         end = experience.end_date or today
 
         if end < start:
@@ -85,7 +103,7 @@ def calculate_total_experience_months(
     if not intervals:
         return 0
 
-    # Sort by start date
+    # Sort employment periods by start date
     intervals.sort(
         key=lambda interval: interval[0]
     )
@@ -96,7 +114,7 @@ def calculate_total_experience_months(
 
     for start, end in intervals[1:]:
 
-        # Overlapping or touching employment periods
+        # Merge overlapping employment periods
         if start <= current_end:
 
             if end > current_end:
@@ -124,6 +142,33 @@ def calculate_total_experience_months(
         )
 
     return total_months
+
+
+def calculate_total_experience_months(
+    resume: ResumeData,
+) -> int:
+    """
+    Calculate total experience, including internships.
+    """
+
+    return _calculate_experience_months(
+        resume,
+        exclude_internships=False,
+    )
+
+
+def calculate_professional_experience_months(
+    resume: ResumeData,
+) -> int:
+    """
+    Calculate professional experience, excluding
+    explicitly classified internships.
+    """
+
+    return _calculate_experience_months(
+        resume,
+        exclude_internships=True,
+    )
 
 
 def normalize_resume(
@@ -280,6 +325,16 @@ def normalize_resume(
 
     resume.total_experience_months = (
         calculate_total_experience_months(
+            resume
+        )
+    )
+
+    # ==================================================
+    # Calculate professional experience
+    # ==================================================
+
+    resume.professional_experience_months = (
+        calculate_professional_experience_months(
             resume
         )
     )

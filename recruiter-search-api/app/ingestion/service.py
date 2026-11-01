@@ -603,6 +603,9 @@ def persist_candidate(
     file_hash: str,
     file_type: str | None = None,
     file_size: int | None = None,
+    primary_domain: str | None = None,
+    domain_confidence: float | None = None,
+    classification_version: str | None = None,
 ) -> Candidate:
 
     candidate_data = resume_data.candidate
@@ -650,6 +653,9 @@ def persist_candidate(
         file_hash=file_hash,
         file_type=file_type,
         file_size=file_size,
+        primary_domain=primary_domain,
+        domain_confidence=domain_confidence,
+        classification_version=classification_version,
     )
 
     db.add(resume)
@@ -712,35 +718,41 @@ def persist_candidate(
         # ----------------------------------------------
 
         experience = Experience(
-            candidate_id=candidate.id,
+    candidate_id=candidate.id,
 
-            company_id=(
-                company.id
-                if company
-                else None
-            ),
+    company_id=(
+        company.id
+        if company
+        else None
+    ),
 
-            role_id=(
-                role.id
-                if role
-                else None
-            ),
+    role_id=(
+        role.id
+        if role
+        else None
+    ),
 
-            start_date=experience_data.start_date,
-            end_date=experience_data.end_date,
+    start_date=experience_data.start_date,
+    end_date=experience_data.end_date,
 
-            is_current=(
-                experience_data.end_date is None
-            ),
+    is_current=(
+        experience_data.end_date is None
+    ),
 
-            duration_months=(
-                experience_data.duration_months
-            ),
+    duration_months=(
+        experience_data.duration_months
+    ),
 
-            description=(
-                experience_data.evidence
-            ),
-        )
+    # NEW: Employment classification
+    employment_type=experience_data.employment_type,
+
+    # NEW: Job seniority
+    seniority_level=experience_data.seniority_level,
+
+    description=(
+        experience_data.evidence
+    ),
+)
 
         db.add(experience)
         db.flush()
@@ -1093,15 +1105,18 @@ def persist_candidate(
             text=education_text,
         )
 
+#  ==================================================
+    # 8. Total and Professional Experience
     # ==================================================
-    # 8. Total Experience
-    # ==================================================
-
+    
     candidate.total_experience_months = (
         resume_data.total_experience_months
     )
-
-    # ==================================================
+    
+    candidate.professional_experience_months = (
+        resume_data.professional_experience_months
+    )
+        # ==================================================
     # 9. Commit
     # ==================================================
 

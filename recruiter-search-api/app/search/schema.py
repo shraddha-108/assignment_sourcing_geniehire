@@ -24,6 +24,7 @@ class SearchRequirement(BaseModel):
     related_requirements: list[str] = Field(default_factory=list)
     group_id: str | None = None
     relationship: RequirementRelationship = "AND"
+    negated: bool = False
     confidence: float | None = Field(default=None, ge=0, le=1)
     field: str | None = None
     value: str | int | float | bool | list[str] | dict[str, Any] | None = None

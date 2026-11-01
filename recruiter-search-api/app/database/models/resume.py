@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -45,6 +45,20 @@ class Resume(Base):
 
     file_size: Mapped[int | None] = mapped_column(
         BigInteger
+    )
+
+    # Resume classification
+    primary_domain: Mapped[str | None] = mapped_column(
+        String(100),
+        index=True,
+    )
+
+    domain_confidence: Mapped[float | None] = mapped_column(
+        Float,
+    )
+
+    classification_version: Mapped[str | None] = mapped_column(
+        String(50),
     )
 
     uploaded_at: Mapped[datetime] = mapped_column(
