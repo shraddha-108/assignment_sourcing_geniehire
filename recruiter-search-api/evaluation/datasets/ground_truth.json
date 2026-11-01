@@ -1,0 +1,1662 @@
+{
+  "evaluation_version": "1.0",
+  "relevance_scale": {
+    "2": "Clearly relevant: explicit resume evidence satisfies the requirement.",
+    "1": "Partially relevant: related evidence exists, but it is insufficient for a full match.",
+    "0": "Not relevant: no sufficient evidence for the requirement."
+  },
+  "queries": [
+    {
+      "query_id": "Q001",
+      "benchmark_query": "candidates who has worked with machine leanring projects",
+      "run_query": "Find candidates who have worked on machine learning projects.",
+      "ground_truth": {
+        "requirements": [
+          {
+            "requirement_id": "r1",
+            "text": "worked on machine learning projects",
+            "type": "SEMANTIC",
+            "match_mode": "HARD",
+            "mandatory": true,
+            "source_of_truth": "resume_evidence",
+            "relationship": "AND"
+          }
+        ],
+        "judgment_pool_scope": "returned_top_10_only",
+        "candidate_judgments": [
+          {
+            "candidate_id": 201,
+            "relevance": 2,
+            "evidence_basis": "Brain tumor segmentation using 3D U-Net and ML-based disaster prediction project."
+          },
+          {
+            "candidate_id": 245,
+            "relevance": 2,
+            "evidence_basis": "CNN/DenseNet-based skin lesion classification project."
+          },
+          {
+            "candidate_id": 247,
+            "relevance": 1,
+            "evidence_basis": "RAG/AI chatbot work; exact machine-learning project contribution is unclear."
+          },
+          {
+            "candidate_id": 361,
+            "relevance": 1,
+            "evidence_basis": "LLM agent/RAG and computer-vision work; direct ML project evidence is less explicit."
+          },
+          {
+            "candidate_id": 346,
+            "relevance": 2,
+            "evidence_basis": "Multilingual RAG system involving embeddings/LLM technologies."
+          },
+          {
+            "candidate_id": 363,
+            "relevance": 2,
+            "evidence_basis": "CNN-based traffic-sign recognition project."
+          },
+          {
+            "candidate_id": 186,
+            "relevance": 2,
+            "evidence_basis": "XGBoost-based fake-news detection project."
+          },
+          {
+            "candidate_id": 309,
+            "relevance": 2,
+            "evidence_basis": "Creating and deploying machine-learning models."
+          },
+          {
+            "candidate_id": 136,
+            "relevance": 2,
+            "evidence_basis": "Cardiovascular prediction using Logistic Regression and Random Forest."
+          },
+          {
+            "candidate_id": 152,
+            "relevance": 2,
+            "evidence_basis": "End-to-end ML cancer detection using SVM, Random Forest and KNN."
+          }
+        ]
+      },
+      "run_observation": {
+        "requested_count_in_packet": 10,
+        "count_explicit": false,
+        "route": "SEMANTIC",
+        "structured_candidate_count": null,
+        "semantic_candidate_count": null,
+        "union_candidate_count": null,
+        "validated_candidate_count": null,
+        "final_result_count": 10,
+        "ranked_candidates": [
+          {
+            "rank": 1,
+            "candidate_id": 201
+          },
+          {
+            "rank": 2,
+            "candidate_id": 245
+          },
+          {
+            "rank": 3,
+            "candidate_id": 247
+          },
+          {
+            "rank": 4,
+            "candidate_id": 361
+          },
+          {
+            "rank": 5,
+            "candidate_id": 346
+          },
+          {
+            "rank": 6,
+            "candidate_id": 363
+          },
+          {
+            "rank": 7,
+            "candidate_id": 186
+          },
+          {
+            "rank": 8,
+            "candidate_id": 309
+          },
+          {
+            "rank": 9,
+            "candidate_id": 136
+          },
+          {
+            "rank": 10,
+            "candidate_id": 152
+          }
+        ]
+      }
+    },
+    {
+      "query_id": "Q002",
+      "benchmark_query": "find candidates who has experience with microsfoft ecosystem",
+      "run_query": "find candidates who have experience with the Microsoft ecosystem",
+      "ground_truth": {
+        "requirements": [
+          {
+            "requirement_id": "r1",
+            "text": "experience with the Microsoft ecosystem",
+            "type": "SEMANTIC",
+            "match_mode": "HARD",
+            "mandatory": true,
+            "source_of_truth": "resume_evidence",
+            "relationship": "AND",
+            "semantic_expansions": [
+              "Dynamics 365 or D365",
+              "Power Platform",
+              "Azure",
+              "Microsoft 365 or Office 365",
+              "SharePoint",
+              "Teams",
+              ".NET or C#",
+              "SQL Server",
+              "Entra ID"
+            ],
+            "expansion_logic": "Alternative retrieval terminology, not additional mandatory requirements."
+          }
+        ],
+        "judgment_pool_scope": "returned_top_10_only",
+        "candidate_judgments": [
+          {
+            "candidate_id": 84,
+            "relevance": 2,
+            "evidence_basis": "Digital Architect with Microsoft Dynamics D365 FO/AX, Power BI, Logic Apps and CI/CD implementation experience."
+          },
+          {
+            "candidate_id": 240,
+            "relevance": 2,
+            "evidence_basis": "D365 F&O technical consultant with Microsoft Dynamics AX/D365 implementation experience and SQL Server."
+          },
+          {
+            "candidate_id": 256,
+            "relevance": 2,
+            "evidence_basis": "Technical Consultant implementing/customizing Microsoft D365 Finance & Operations with X++, SQL, Azure DevOps, LCS and SSRS."
+          },
+          {
+            "candidate_id": 295,
+            "relevance": 2,
+            "evidence_basis": "10+ years Microsoft Dynamics D365/AX experience with X++, SSRS, AIF and .NET."
+          },
+          {
+            "candidate_id": 32,
+            "relevance": 2,
+            "evidence_basis": "D365 Finance & Operations, Dynamics NAV/Business Central, Azure DevOps and Logic Apps experience."
+          },
+          {
+            "candidate_id": 13,
+            "relevance": 2,
+            "evidence_basis": "D365, Power Automate, Azure Functions, Logic Apps and Azure DevOps project experience."
+          },
+          {
+            "candidate_id": 352,
+            "relevance": 2,
+            "evidence_basis": "D365 functional consulting experience involving Microsoft Dynamics ERP implementation/support."
+          },
+          {
+            "candidate_id": 183,
+            "relevance": 2,
+            "evidence_basis": "Microsoft Dynamics CRM functional testing experience with CRM 2013/15/16, PowerApps, PowerAutomate, Dataverse and Azure DevOps."
+          },
+          {
+            "candidate_id": 24,
+            "relevance": 2,
+            "evidence_basis": "D365 Finance & Operations implementation and technical consulting experience with X++, SSRS and SQL Server."
+          },
+          {
+            "candidate_id": 285,
+            "relevance": 2,
+            "evidence_basis": "D365 F&O, Power Platform, Power Automate, Azure DevOps and LCS experience."
+          }
+        ]
+      },
+      "run_observation": {
+        "requested_count_in_packet": 10,
+        "count_explicit": false,
+        "route": "SEMANTIC",
+        "semantic_requirements": [
+          "experience with the Microsoft ecosystem"
+        ],
+        "retrieval_count": 200,
+        "chunk_reranking": {
+          "input_count": 160,
+          "output_count": 160,
+          "duration_seconds": 12.03
+        },
+        "candidate_consolidation": {
+          "input_count": 160,
+          "output_count": 64
+        },
+        "candidate_semantic_validation": {
+          "input_count": 64,
+          "output_count": 1,
+          "duration_seconds": 7.69
+        },
+        "evidence_validation": {
+          "input_count": 86,
+          "output_count": 72
+        },
+        "qualification": {
+          "input_count": 86,
+          "output_count": 72
+        },
+        "ranking": {
+          "input_count": 72,
+          "output_count": 10
+        },
+        "counts": {
+          "structured_candidates": 0,
+          "semantic_candidates": 86,
+          "union_candidates": 86,
+          "validated_candidates": 72,
+          "final_candidates": 10
+        },
+        "duration_seconds": 20.95,
+        "ranked_candidates": [
+          {
+            "rank": 1,
+            "candidate_id": 84
+          },
+          {
+            "rank": 2,
+            "candidate_id": 240
+          },
+          {
+            "rank": 3,
+            "candidate_id": 256
+          },
+          {
+            "rank": 4,
+            "candidate_id": 295
+          },
+          {
+            "rank": 5,
+            "candidate_id": 32
+          },
+          {
+            "rank": 6,
+            "candidate_id": 13
+          },
+          {
+            "rank": 7,
+            "candidate_id": 352
+          },
+          {
+            "rank": 8,
+            "candidate_id": 183
+          },
+          {
+            "rank": 9,
+            "candidate_id": 24
+          },
+          {
+            "rank": 10,
+            "candidate_id": 285
+          }
+        ],
+        "anomalies": [
+          "candidate_semantic_validation output_count was 1 while evidence_validation and qualification processed 86 candidates.",
+          "Some candidate records had null/negative candidate reranker scores despite MATCH status.",
+          "The captured parsed query showed 'ind candidates...' instead of the typed 'find candidates...'; this should be checked against the raw request capture."
+        ]
+      }
+    },
+    {
+  "query_id": "Q003",
+  "benchmark_query": "candidates who has built products with ai and worked with langchain framework",
+  "run_query": "candidates who have built products with ai and worked with langchain framework",
+
+  "ground_truth": {
+    "requirements": [
+      {
+        "requirement_id": "r1",
+        "text": "built products with ai",
+        "type": "SEMANTIC",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "resume_evidence",
+        "relationship": "AND",
+        "semantic_expansions": [
+          "AI-powered products",
+          "production AI applications"
+        ]
+      },
+      {
+        "requirement_id": "r2",
+        "text": "worked with LangChain framework",
+        "type": "STRUCTURED",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "candidate_skill",
+        "relationship": "AND"
+      }
+    ],
+
+    "judgment_pool_scope": "returned_top_10_only",
+
+    "candidate_judgments": [
+      {
+        "rank": 1,
+        "candidate_id": 250,
+        "relevance": 2,
+        "evidence_basis": "Built ALTIV, an AI-powered resume analysis platform, and has LangChain listed as a candidate skill."
+      },
+      {
+        "rank": 2,
+        "candidate_id": 333,
+        "relevance": 2,
+        "evidence_basis": "Built an AI Document Intelligence RAG platform and has LangChain listed as a skill."
+      },
+      {
+        "rank": 3,
+        "candidate_id": 262,
+        "relevance": 2,
+        "evidence_basis": "Built RAG-based AI systems and a Healthcare SLM Integration project using LangChain."
+      },
+      {
+        "rank": 4,
+        "candidate_id": 30,
+        "relevance": 2,
+        "evidence_basis": "Built an AI-powered chatbot and has LangChain listed among skills."
+      },
+      {
+        "rank": 5,
+        "candidate_id": 97,
+        "relevance": 2,
+        "evidence_basis": "Built AI PDF Chat and multiple GenAI chatbots using LangChain."
+      },
+      {
+        "rank": 6,
+        "candidate_id": 245,
+        "relevance": 2,
+        "evidence_basis": "Built a PDF Q&A Assistant using LangChain orchestration and OpenAI GPT; also has AI/agent development experience."
+      },
+      {
+        "rank": 7,
+        "candidate_id": 193,
+        "relevance": 2,
+        "evidence_basis": "Built AI Decision Auditor using LangChain, Pinecone and GPT-OSS, with extensive RAG evaluation."
+      },
+      {
+        "rank": 8,
+        "candidate_id": 372,
+        "relevance": 2,
+        "evidence_basis": "Built an AI-driven RAG Q&A platform and has LangChain as a professional skill."
+      },
+      {
+        "rank": 9,
+        "candidate_id": 28,
+        "relevance": 2,
+        "evidence_basis": "Built an AI-powered intelligent test automation platform and has LangChain listed as a skill."
+      },
+      {
+        "rank": 10,
+        "candidate_id": 11,
+        "relevance": 2,
+        "evidence_basis": "Built an AI-powered document generation platform using LangChain."
+      }
+    ]
+  },
+
+  "run_observation": {
+    "requested_count": 10,
+    "count_explicit": false,
+    "route": "HYBRID",
+
+    "structured_requirements": {
+      "skills": [
+        "langchain"
+      ]
+    },
+
+    "semantic_requirements": [
+      "built products with ai"
+    ],
+
+    "counts": {
+      "structured_candidates": 20,
+      "semantic_candidates": 20,
+      "union": 20,
+      "validated": 15,
+      "final": 10
+    },
+
+    "execution_trace": {
+      "structured_filter": {
+        "input_count": null,
+        "output_count": 20,
+        "duration_seconds": 0.017766
+      },
+      "semantic_retrieval": {
+        "input_count": 20,
+        "output_count": 166,
+        "duration_seconds": 0.126992
+      },
+      "chunk_reranking": {
+        "input_count": 60,
+        "output_count": 60,
+        "duration_seconds": 6.878178
+      },
+      "candidate_consolidation": {
+        "input_count": 60,
+        "output_count": 20,
+        "duration_seconds": 0.016209
+      },
+      "candidate_semantic_validation": {
+        "input_count": 20,
+        "output_count": 8,
+        "duration_seconds": 2.396675
+      },
+      "evidence_validation": {
+        "input_count": 20,
+        "output_count": 15,
+        "duration_seconds": 0.069965
+      },
+      "qualification": {
+        "input_count": 20,
+        "output_count": 15,
+        "duration_seconds": 0.147981
+      },
+      "ranking": {
+        "input_count": 15,
+        "output_count": 10,
+        "duration_seconds": 0.0
+      },
+      "total_duration_seconds": 9.7454136
+    },
+
+    "rejections": [
+      {
+        "candidate_id": 29,
+        "requirement_id": "r1",
+        "stage": "evidence_validation",
+        "reason": "Retrieved passages did not contain clear supporting evidence"
+      },
+      {
+        "candidate_id": 33,
+        "requirement_id": "r1",
+        "stage": "evidence_validation",
+        "reason": "Retrieved passages did not contain clear supporting evidence"
+      },
+      {
+        "candidate_id": 289,
+        "requirement_id": "r1",
+        "stage": "evidence_validation",
+        "reason": "Retrieved passages did not contain clear supporting evidence"
+      },
+      {
+        "candidate_id": 343,
+        "requirement_id": "r1",
+        "stage": "evidence_validation",
+        "reason": "Retrieved passages did not contain clear supporting evidence"
+      },
+      {
+        "candidate_id": 369,
+        "requirement_id": "r1",
+        "stage": "evidence_validation",
+        "reason": "Retrieved passages did not contain clear supporting evidence"
+      }
+    ],
+
+    "ranked_candidates": [
+      {
+        "rank": 1,
+        "candidate_id": 250,
+        "score": 91.8
+      },
+      {
+        "rank": 2,
+        "candidate_id": 333,
+        "score": 91.0
+      },
+      {
+        "rank": 3,
+        "candidate_id": 262,
+        "score": 88.5
+      },
+      {
+        "rank": 4,
+        "candidate_id": 30,
+        "score": 88.1
+      },
+      {
+        "rank": 5,
+        "candidate_id": 97,
+        "score": 87.3
+      },
+      {
+        "rank": 6,
+        "candidate_id": 245,
+        "score": 86.5
+      },
+      {
+        "rank": 7,
+        "candidate_id": 193,
+        "score": 85.7
+      },
+      {
+        "rank": 8,
+        "candidate_id": 372,
+        "score": 83.6
+      },
+      {
+        "rank": 9,
+        "candidate_id": 28,
+        "score": 82.2
+      },
+      {
+        "rank": 10,
+        "candidate_id": 11,
+        "score": 81.9
+      }
+    ],
+
+    "anomalies": [
+      "The routing packet creates both r2 ('worked with LangChain framework') and structured_skill_1 ('langchain'), which represent essentially the same structured requirement.",
+      "Candidate validation shows r2 as NO_MATCH for returned candidates while structured_skill_1 is MATCH, even though the candidate has LangChain evidence. This indicates a requirement-resolution inconsistency.",
+      "candidate_semantic_validation output_count is 8 while evidence_validation and qualification process 20 candidates.",
+      "The final 10 candidates are independently judged relevant despite the r2 validation inconsistency."
+    ]
+  },
+
+  "source": "Uploaded Q003 search output."
+},
+{
+  "query_id": "Q004",
+  "benchmark_query": "Find candidates with React and Node.js experience who built e-commerce platforms",
+  "run_query": "Find candidates with React and Node.js experience who have built e-commerce platforms",
+  "ground_truth": {
+    "requirements": [
+      {
+        "requirement_id": "structured_skill_1",
+        "text": "React experience",
+        "type": "STRUCTURED",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "candidate_skill",
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "r2",
+        "text": "Node.js experience",
+        "type": "STRUCTURED",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "candidate_skill",
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "r3",
+        "text": "built e-commerce platforms",
+        "type": "SEMANTIC",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "resume_evidence",
+        "relationship": "AND"
+      }
+    ],
+    "judgment_pool_scope": "returned_top_6_only",
+    "candidate_judgments": [
+      {
+        "rank": 1,
+        "candidate_id": 247,
+        "relevance": 2,
+        "evidence_basis": "React and Node.js are explicitly listed as skills. Built KicksCulture, a full-stack e-commerce application supporting products, cart, wishlist, orders, addresses and order history."
+      },
+      {
+        "rank": 2,
+        "candidate_id": 354,
+        "relevance": 2,
+        "evidence_basis": "React and Node.js experience is explicit. Built a full-stack E-commerce Management System with an admin dashboard, inventory management, JWT authentication and role-based access control."
+      },
+      {
+        "rank": 3,
+        "candidate_id": 57,
+        "relevance": 2,
+        "evidence_basis": "Strong direct evidence: built and deployed a cloud-hosted e-commerce web platform using React, JavaScript, Node.js and AWS, supporting online sales and lead generation."
+      },
+      {
+        "rank": 4,
+        "candidate_id": 109,
+        "relevance": 2,
+        "evidence_basis": "Developed a full-stack e-commerce platform serving 10,000+ users per month using the MERN stack. Resume also explicitly shows React and Node.js experience."
+      },
+      {
+        "rank": 5,
+        "candidate_id": 98,
+        "relevance": 1,
+        "evidence_basis": "Has React and Node.js experience and built a React-based online ordering app. Also worked on MERN-stack admin/user websites with Stripe payment integration. However, the resume does not clearly establish that the described websites or food-ordering app constitute a full e-commerce platform."
+      },
+      {
+        "rank": 6,
+        "candidate_id": 99,
+        "relevance": 2,
+        "evidence_basis": "Resume lists React and Node.js experience and explicitly describes designing and developing a Next.js-based e-commerce application with SSR, product image storage, Redux and Razorpay payment integration."
+      }
+    ]
+  },
+  "run_observation": {
+    "requested_count": 10,
+    "count_explicit": false,
+    "returned_count": 6,
+    "route": "HYBRID",
+    "structured_requirements": {
+      "skills": [
+        "react",
+        "Node.js"
+      ]
+    },
+    "semantic_requirements": [
+      "built e-commerce platforms"
+    ],
+    "routing_requirement_ids": [
+      "r2",
+      "r3",
+      "structured_skill_1",
+      "structured_skill_2"
+    ],
+    "counts": {
+      "structured_candidates": 79,
+      "semantic_candidates": 72,
+      "union_candidates": 79,
+      "validated_candidates": 6,
+      "final_candidates": 6
+    },
+    "execution_trace": {
+      "structured_filter": {
+        "input_count": null,
+        "output_count": 79,
+        "duration_seconds": 0.014417
+      },
+      "semantic_retrieval": {
+        "input_count": 79,
+        "output_count": 200,
+        "duration_seconds": 0.151696
+      },
+      "chunk_reranking": {
+        "input_count": 160,
+        "output_count": 160,
+        "duration_seconds": 9.848882
+      },
+      "candidate_consolidation": {
+        "input_count": 160,
+        "output_count": 64,
+        "duration_seconds": 0.062447
+      },
+      "candidate_semantic_validation": {
+        "input_count": 64,
+        "output_count": 13,
+        "duration_seconds": 4.955261
+      },
+      "evidence_validation": {
+        "input_count": 79,
+        "output_count": 14,
+        "duration_seconds": 0.301163
+      },
+      "qualification": {
+        "input_count": 79,
+        "output_count": 6,
+        "duration_seconds": 0.478463
+      },
+      "ranking": {
+        "input_count": 6,
+        "output_count": 6,
+        "duration_seconds": 0.0
+      },
+      "total_duration_seconds": 16.093582
+    },
+    "rejections": {
+      "total_rejection_records": 102,
+      "by_stage_and_requirement": [
+        {
+          "stage": "evidence_validation",
+          "requirement_id": "r3",
+          "reason": "Retrieved passages did not contain clear supporting evidence",
+          "count": 65
+        },
+        {
+          "stage": "qualification",
+          "requirement_id": "r2",
+          "reason": "SKILL",
+          "count": 35
+        },
+        {
+          "stage": "qualification",
+          "requirement_id": "structured_skill_1",
+          "reason": "SKILL",
+          "count": 2
+        }
+      ]
+    },
+    "ranked_candidates": [
+      {
+        "rank": 1,
+        "candidate_id": 247,
+        "name": "Pranav Kavade",
+        "score": 90.1,
+        "candidate_reranker_score": 4.488863,
+        "candidate_score_above_threshold": true
+      },
+      {
+        "rank": 2,
+        "candidate_id": 354,
+        "name": "Suraj Nikam",
+        "score": 89.3,
+        "candidate_reranker_score": 6.220829,
+        "candidate_score_above_threshold": true
+      },
+      {
+        "rank": 3,
+        "candidate_id": 57,
+        "name": "GANESH SIDDHESHWAR JADHAV",
+        "score": 89.1,
+        "candidate_reranker_score": 6.480923,
+        "candidate_score_above_threshold": true
+      },
+      {
+        "rank": 4,
+        "candidate_id": 109,
+        "name": "Manoj Gayakwad",
+        "score": 88.4,
+        "candidate_reranker_score": 4.889654,
+        "candidate_score_above_threshold": true
+      },
+      {
+        "rank": 5,
+        "candidate_id": 98,
+        "name": "Kushal Bankhede",
+        "score": 84.6,
+        "candidate_reranker_score": null,
+        "candidate_score_above_threshold": false
+      },
+      {
+        "rank": 6,
+        "candidate_id": 99,
+        "name": "Liladhar Harode",
+        "score": 78.9,
+        "candidate_reranker_score": -7.446392,
+        "candidate_score_above_threshold": false
+      }
+    ],
+    "anomalies": [
+      "Node.js appears twice in the routing requirements: r2 and structured_skill_2. Both are mandatory structured requirements, creating a duplicate requirement.",
+      "Candidate semantic validation processes 64 candidates and outputs 13, while evidence validation processes 79 and outputs 14. Qualification then processes 79 and outputs 6. The relationship between these stage counts should be investigated.",
+      "Candidates 98 and 99 are returned with MATCH status even though candidate_score_above_threshold is false. Candidate 98 has a null candidate reranker score, while candidate 99 has a score of -7.446392 against a threshold of 0.0.",
+      "The system requested 10 results but returned only 6 qualified candidates. This is a result shortfall, not necessarily a failure, because only 6 candidates passed qualification.",
+      "The semantic retrieval stage reports 200 output items, while the overall semantic candidate count is 72. These appear to represent different units, such as retrieved chunks versus unique candidates, and should be clearly distinguished in evaluation metrics."
+    ]
+  },
+  "source": "Uploaded Q004 search output."
+},
+{
+  "query_id": "Q005",
+  "benchmark_query": "Find 10 Python developers with 3+ years of experience who have built AI products",
+  "run_query": "Find 10 Python developers with 3+ years of experience who have built AI products",
+  "ground_truth": {
+    "requirements": [
+      {
+        "requirement_id": "python_skill",
+        "text": "Python experience",
+        "type": "STRUCTURED",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "candidate_skill",
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "developer_role",
+        "text": "Developer role",
+        "type": "STRUCTURED",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "experience_role",
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "minimum_experience",
+        "text": "3+ years of overall experience",
+        "type": "STRUCTURED",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "candidate_total_experience",
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "ai_product_experience",
+        "text": "Built AI products",
+        "type": "SEMANTIC",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "resume_evidence",
+        "relationship": "AND",
+        "semantic_expansions": [
+          "AI-powered products",
+          "production AI applications",
+          "AI-based applications and platforms"
+        ]
+      }
+    ],
+    "judgment_pool_scope": "returned_top_3_only",
+    "candidate_judgments": [
+      {
+        "rank": 1,
+        "candidate_id": 319,
+        "relevance": 2,
+        "evidence_basis": "Python Developer with 4 years 1 month of experience. Built HyeGro, an AI-driven CRM platform, developing its backend and frontend using Python, FastAPI, PostgreSQL and React."
+      },
+      {
+        "rank": 2,
+        "candidate_id": 389,
+        "relevance": 2,
+        "evidence_basis": "Full Stack Python Developer with 3 years 1 month of experience. Built an Enterprise Knowledge Assistant using Python, LangChain and OpenAI APIs, and an AI-powered Document Intelligence Platform using Python and LLMs."
+      },
+      {
+        "rank": 3,
+        "candidate_id": 82,
+        "relevance": 2,
+        "evidence_basis": "Software Developer with 3 years of experience and Python skills. Worked on Rippl, developing Python-based services for automated content moderation and a news chatbot."
+      }
+    ]
+  },
+  "run_observation": {
+    "requested_count": 10,
+    "count_explicit": true,
+    "returned_count": 3,
+    "route": "HYBRID",
+    "structured_requirements": {
+      "skills": [
+        "python"
+      ],
+      "roles": [
+        "developer"
+      ],
+      "min_experience_years": 3.0
+    },
+    "semantic_requirements": [
+      "built AI products"
+    ],
+    "counts": {
+      "structured_candidates": 33,
+      "semantic_candidates": 33,
+      "union_candidates": 33,
+      "validated_candidates": 3,
+      "final_candidates": 3
+    },
+    "execution_trace": {
+      "structured_filter": {
+        "input_count": null,
+        "output_count": 33,
+        "duration_seconds": 0.395916
+      },
+      "semantic_retrieval": {
+        "input_count": 33,
+        "output_count": 200,
+        "duration_seconds": 0.091490
+      },
+      "chunk_reranking": {
+        "input_count": 103,
+        "output_count": 103,
+        "duration_seconds": 7.866882
+      },
+      "candidate_consolidation": {
+        "input_count": 103,
+        "output_count": 33,
+        "duration_seconds": 0.027505
+      },
+      "candidate_semantic_validation": {
+        "input_count": 33,
+        "output_count": 3,
+        "duration_seconds": 3.068566
+      },
+      "evidence_validation": {
+        "input_count": 33,
+        "output_count": 9,
+        "duration_seconds": 0.109566
+      },
+      "qualification": {
+        "input_count": 33,
+        "output_count": 3,
+        "duration_seconds": 0.297080
+      },
+      "ranking": {
+        "input_count": 3,
+        "output_count": 3,
+        "duration_seconds": 0.0
+      },
+      "total_duration_seconds": 11.991088
+    },
+    "ranked_candidates": [
+      {
+        "rank": 1,
+        "candidate_id": 319,
+        "name": "Shivam Malhotra",
+        "score": 85.6
+      },
+      {
+        "rank": 2,
+        "candidate_id": 389,
+        "name": "Yuvraj Dilip Patil",
+        "score": 83.1
+      },
+      {
+        "rank": 3,
+        "candidate_id": 82,
+        "name": "Kaumudi Kalikar",
+        "score": 79.9
+      }
+    ],
+    "anomalies": [
+      "The semantic requirement was incorrectly parsed as 'built AI products' with a trailing quotation mark. The malformed value was propagated into retrieval and validation.",
+      "The developer role appears twice in the routing packet: r2 ('developers') and structured_role_1 ('developer'). These are duplicate requirements.",
+      "The validation requirement_statuses report r2 as NO_MATCH while structured_role_1 is MATCH for returned candidates, indicating inconsistent handling of the duplicated role requirement.",
+      "Candidate semantic validation processed 33 candidates and output 3, while evidence validation processed 33 and output 9. The relationship between these validation branches should be investigated.",
+      "Candidates 389 and 82 were returned with MATCH status even though their candidate reranker scores were below the configured threshold of 0.0.",
+      "The system was asked for 10 candidates but returned only 3 qualified candidates."
+    ]
+  }
+},
+{
+  "query_id": "Q006",
+  "benchmark_query": "Find candidates with 2+ years of sales experience who have worked in B2B sales.",
+  "run_query": "Find candidates with 2+ years of sales experience who have worked in B2B sales.",
+  "ground_truth": {
+    "requirements": [
+      {
+        "requirement_id": "sales_experience",
+        "text": "2+ years of sales experience",
+        "type": "STRUCTURED",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "experience_domain",
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "b2b_sales",
+        "text": "Worked in B2B sales",
+        "type": "SEMANTIC",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "resume_evidence",
+        "relationship": "AND"
+      }
+    ],
+    "judgment_pool_scope": "returned_top_2_only",
+    "candidate_judgments": [
+      {
+        "rank": 1,
+        "candidate_id": 126,
+        "relevance": 2,
+        "evidence_basis": "Adarsh Anil Pandilwar has 2 years 5 months of experience and explicit B2B sales experience. His resume states 2+ years in B2B and B2C sales and describes onboarding B2B accounts, closing B2B deals, and managing enterprise/MNC clients."
+      },
+      {
+        "rank": 2,
+        "candidate_id": 107,
+        "relevance": 0,
+        "evidence_basis": "Manish Gautam has sufficient overall experience, but the retrieved B2B evidence refers to developing a B2B spot rental booking management system as a Software Engineer. This is B2B product/technical work, not experience working in B2B sales."
+      }
+    ]
+  },
+  "run_observation": {
+    "requested_count": 10,
+    "count_explicit": false,
+    "returned_count": 2,
+    "route": "HYBRID",
+    "structured_requirements": {
+      "skills": [],
+      "roles": [],
+      "companies": [],
+      "min_experience_years": 2.0,
+      "max_experience_years": null,
+      "relevant_experience_min_years": 2.0,
+      "experience_scope": "RELEVANT"
+    },
+    "semantic_requirements": [
+      "worked in B2B sales"
+    ],
+    "counts": {
+      "structured_candidates": 357,
+      "semantic_candidates": 93,
+      "union_candidates": 357,
+      "validated_candidates": 2,
+      "final_candidates": 2
+    },
+    "duration_seconds": 15.088555,
+    "ranked_candidates": [
+      {
+        "rank": 1,
+        "candidate_id": 126,
+        "name": "Adarsh Anil Pandilwar",
+        "score": 80.8
+      },
+      {
+        "rank": 2,
+        "candidate_id": 107,
+        "name": "Manish Gautam",
+        "score": 72.0
+      }
+    ],
+    "anomalies": [
+      "The system returned only 2 candidates although the default requested count was 10.",
+      "Candidate 107 was classified as MATCH for B2B sales based on evidence describing a B2B rental booking management system, which does not establish B2B sales experience.",
+      "Candidate 107 therefore represents a semantic false positive.",
+      "The relevant-experience validation for candidate 107 also treated the Software Engineer tenure as sales experience even though the role itself is software engineering.",
+      "The system correctly identified candidate 126 as a strong match for both the 2+ years sales requirement and the B2B sales requirement."
+    ]
+  }
+},
+
+{
+  "query_id": "Q007",
+  "benchmark_query": "Find sales candidates who have experience with CRM platforms and enterprise clients.",
+  "run_query": "Find sales candidates who have experience with CRM platforms and enterprise clients.",
+  "ground_truth": {
+    "requirements": [
+      {
+        "requirement_id": "sales_role",
+        "text": "Sales experience",
+        "type": "STRUCTURED",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "experience_role",
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "crm_platforms",
+        "text": "Experience with CRM platforms",
+        "type": "SEMANTIC",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "resume_evidence",
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "enterprise_clients",
+        "text": "Experience with enterprise clients",
+        "type": "SEMANTIC",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "resume_evidence",
+        "relationship": "AND"
+      }
+    ],
+    "judgment_pool_scope": "returned_top_2_only",
+    "candidate_judgments": [
+      {
+        "rank": 1,
+        "candidate_id": 156,
+        "relevance": 2,
+        "evidence_basis": "NAMRATA D. SIDDHE has extensive B2B technology sales experience. Her resume lists CRM (Bitrix), and her Business Development and Renewal Sales Executive experience at Softcell Technologies explicitly describes maintaining a Bitrix CRM pipeline and managing B2B renewal sales for engineering and manufacturing enterprise clients. She also has inside sales experience."
+      },
+      {
+        "rank": 2,
+        "candidate_id": 157,
+        "relevance": 2,
+        "evidence_basis": "Nandeesh Gautam has business development and sales experience across SaaS, ERP, fintech, and software consulting. His resume describes evaluating and finalizing a Zoho CRM implementation strategy, working with LeadSquared, Apollo.io, and ZoomInfo, managing B2B sales, engaging CXO-level stakeholders, and handling enterprise and institutional clients."
+      }
+    ]
+  },
+  "run_observation": {
+    "requested_count": 10,
+    "count_explicit": false,
+    "returned_count": 2,
+    "route": "HYBRID",
+    "structured_requirements": {
+      "skills": [],
+      "roles": [
+        "sales"
+      ],
+      "companies": [],
+      "location": null,
+      "min_experience_years": null,
+      "max_experience_years": null
+    },
+    "semantic_requirements": [
+      "experience with CRM platforms",
+      "experience with enterprise clients"
+    ],
+    "counts": {
+      "structured_candidates": 17,
+      "semantic_candidates": 17,
+      "union_candidates": 17,
+      "validated_candidates": 2,
+      "final_candidates": 2
+    },
+    "stage_counts": {
+      "structured_filter": {
+        "output": 17
+      },
+      "semantic_retrieval": {
+        "input": 17,
+        "output": 200
+      },
+      "chunk_reranking": {
+        "input": 56,
+        "output": 56
+      },
+      "candidate_consolidation": {
+        "input": 56,
+        "output": 28
+      },
+      "candidate_semantic_validation": {
+        "input": 28,
+        "output": 6
+      },
+      "evidence_validation": {
+        "input": 17,
+        "output": 2
+      },
+      "qualification": {
+        "input": 17,
+        "output": 2
+      },
+      "ranking": {
+        "input": 2,
+        "output": 2
+      }
+    },
+    "duration_seconds": 9.2678508,
+    "ranked_candidates": [
+      {
+        "rank": 1,
+        "candidate_id": 156,
+        "name": "NAMRATA D. SIDDHE",
+        "score": 83.3
+      },
+      {
+        "rank": 2,
+        "candidate_id": 157,
+        "name": "Nandeesh Gautam",
+        "score": 72.7
+      }
+    ],
+    "anomalies": [
+      "The system returned only 2 candidates although the default requested count was 10.",
+      "The sales role requirement is duplicated as r1 and structured_role_1.",
+      "Candidate 156 was marked as matching CRM platforms, but the selected evidence chunk discusses customer success and technical pre-sales rather than actual CRM platform usage.",
+      "Candidate 156 had a candidate reranker score of -6.769, below the configured threshold of 0.0, but the CRM requirement was still marked as matched.",
+      "Candidate 157 was marked as matching CRM platforms using a generic summary chunk rather than direct CRM evidence, despite explicit CRM evidence elsewhere in the resume.",
+      "Candidate 157 was marked as matching enterprise clients using a generic summary chunk rather than the stronger enterprise sales evidence available in the experience history.",
+      "Candidate-level requirement validation statuses conflict with the final MATCH results for both candidates.",
+      "The structured role filter correctly scoped semantic retrieval to 17 eligible sales-role candidates before semantic retrieval."
+    ]
+  }
+},
+
+{
+  "query_id": "Q008",
+  "benchmark_query": "Find candidates with 2+ years of digital marketing experience who have worked on SEO campaigns.",
+  "run_query": "Find candidates with 2+ digital marketing experience who have worked on SEO campaigns.\"",
+  "ground_truth": {
+    "requirements": [
+      {
+        "requirement_id": "digital_marketing_experience",
+        "text": "At least 2 years of digital marketing experience",
+        "type": "STRUCTURED",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "structured_experience_lookup",
+        "minimum_relevant_experience_months": 24,
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "seo_campaigns",
+        "text": "Worked on SEO campaigns",
+        "type": "SEMANTIC",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "resume_evidence",
+        "relationship": "AND"
+      }
+    ],
+    "judgment_pool_scope": "returned_candidates_only",
+    "candidate_judgments": []
+  },
+  "run_observation": {
+    "requested_count": 10,
+    "count_explicit": false,
+    "returned_count": 0,
+    "route": "HYBRID",
+    "structured_requirements": {
+      "skills": [],
+      "roles": [],
+      "companies": [],
+      "min_experience_years": null,
+      "max_experience_years": null,
+      "relevant_experience_min_years": 2.0,
+      "experience_scope": "RELEVANT"
+    },
+    "semantic_requirements": [
+      "worked on SEO campaigns"
+    ],
+    "counts": {
+      "structured_candidates": 0,
+      "semantic_candidates": 0,
+      "union_candidates": 0,
+      "validated_candidates": 0,
+      "final_candidates": 0
+    },
+    "duration_seconds": 0.001149,
+    "ui_duration_seconds": 4.194,
+    "ranked_candidates": [],
+    "anomalies": [
+      "The structured filter returned zero candidates.",
+      "Semantic retrieval did not execute because the structured candidate pool was empty.",
+      "The parser correctly identified a minimum of 2 years of relevant digital marketing experience.",
+      "The run_query contains a wording difference from the benchmark query and a trailing quotation mark.",
+      "Potential false negative: candidates with relevant digital marketing and SEO experience appeared in the unconstrained search, but the 2-year constrained run returned zero candidates.",
+      "The UI displayed approximately 4.194 seconds, while the internal execution trace reported approximately 0.001149 seconds."
+    ]
+  }
+},
+
+{
+  "query_id": "Q009",
+  "benchmark_query": "Find candidates with HR experience who have worked on recruitment and employee onboarding.",
+  "run_query": "Find candidates with HR experience who have worked on recruitment and employee onboarding.",
+  "ground_truth": {
+    "requirements": [
+      {
+        "requirement_id": "hr_experience",
+        "text": "HR experience",
+        "type": "STRUCTURED",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "experience_role",
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "recruitment",
+        "text": "Worked on recruitment",
+        "type": "SEMANTIC",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "resume_evidence",
+        "relationship": "AND"
+      },
+      {
+        "requirement_id": "employee_onboarding",
+        "text": "Worked on employee onboarding",
+        "type": "SEMANTIC",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "resume_evidence",
+        "relationship": "AND"
+      }
+    ],
+    "judgment_pool_scope": "returned_top_7_only",
+    "candidate_judgments": [
+      {
+        "rank": 1,
+        "candidate_id": 213,
+        "relevance": 2,
+        "evidence_basis": "Vidhi Saxena has HR Executive and Senior Technical Recruiter experience. Her resume describes sourcing, screening, interview coordination, complete recruitment-cycle management, and onboarding new hires."
+      },
+      {
+        "rank": 2,
+        "candidate_id": 180,
+        "relevance": 2,
+        "evidence_basis": "Rutuja Patil has Recruitment Specialist and HR IT Recruiter experience. Her resume explicitly describes end-to-end recruitment, sourcing, screening, interview coordination, offer negotiation, and onboarding."
+      },
+      {
+        "rank": 3,
+        "candidate_id": 59,
+        "relevance": 2,
+        "evidence_basis": "Garima Arjun Gohad has Talent Acquisition Executive and HR Recruitment Consultant experience. Her resume describes complete recruitment lifecycle responsibilities and explicitly states responsibility for the end-to-end process from sourcing profiles through offer release and onboarding."
+      },
+      {
+        "rank": 4,
+        "candidate_id": 141,
+        "relevance": 2,
+        "evidence_basis": "Divya Vinodrao Bhatkar has Senior IT Recruitment Specialist, HR Recruiter, and IT Recruiter experience. Her resume repeatedly describes complete recruitment lifecycle management from requirement gathering through onboarding, including sourcing, screening, HR discussions, interview coordination, and offer negotiation."
+      },
+      {
+        "rank": 5,
+        "candidate_id": 202,
+        "relevance": 2,
+        "evidence_basis": "Surabhi Jaiprakash has HR Officer, Talent Acquisition Specialist, and Management Trainee - HR experience. Her resume explicitly describes end-to-end recruitment, candidate sourcing, screening, offer management, onboarding, background verification, induction, and orientation."
+      },
+      {
+        "rank": 6,
+        "candidate_id": 173,
+        "relevance": 2,
+        "evidence_basis": "Reshma Gholap has HR Officer, HR Executive - Recruitment, IT Recruiter, and Senior IT Recruiter experience. Her resume describes full recruitment lifecycle management, candidate sourcing, screening, interviews, offer processing, joining follow-ups, onboarding, and employee lifecycle management."
+      },
+      {
+        "rank": 7,
+        "candidate_id": 208,
+        "relevance": 2,
+        "evidence_basis": "Vaishnavi Gatkal has Talent Acquisition Specialist and HR IT Recruiter experience. Her resume describes end-to-end recruitment activities, sourcing, screening, interview coordination, offer rollout, onboarding coordination, documentation verification, induction support, and joining formalities."
+      }
+    ]
+  },
+  "run_observation": {
+    "requested_count": 10,
+    "count_explicit": false,
+    "returned_count": 7,
+    "route": "HYBRID",
+    "structured_requirements": {
+      "skills": [],
+      "roles": [
+        "HR"
+      ],
+      "companies": [],
+      "min_experience_years": null,
+      "max_experience_years": null
+    },
+    "semantic_requirements": [
+      "worked on recruitment",
+      "worked on employee onboarding"
+    ],
+    "counts": {
+      "structured_candidates": 16,
+      "semantic_candidates": 16,
+      "union_candidates": 16,
+      "validated_candidates": 8,
+      "final_candidates": 7
+    },
+    "stage_counts": {
+      "structured_filter": {
+        "output": 16
+      },
+      "semantic_retrieval": {
+        "input": 16,
+        "output": 200
+      },
+      "chunk_reranking": {
+        "input": 48,
+        "output": 48
+      },
+      "candidate_consolidation": {
+        "input": 48,
+        "output": 27
+      },
+      "candidate_semantic_validation": {
+        "input": 27,
+        "output": 4
+      },
+      "evidence_validation": {
+        "input": 16,
+        "output": 8
+      },
+      "qualification": {
+        "input": 16,
+        "output": 8
+      },
+      "ranking": {
+        "input": 8,
+        "output": 7
+      }
+    },
+    "duration_seconds": 7.5899051,
+    "ranked_candidates": [
+      {
+        "rank": 1,
+        "candidate_id": 213,
+        "name": "Vidhi Saxena",
+        "score": 89.8
+      },
+      {
+        "rank": 2,
+        "candidate_id": 180,
+        "name": "Rutuja Patil",
+        "score": 83.4
+      },
+      {
+        "rank": 3,
+        "candidate_id": 59,
+        "name": "Garima Arjun Gohad",
+        "score": 77.0
+      },
+      {
+        "rank": 4,
+        "candidate_id": 141,
+        "name": "DIVYA VINODRAO BHATKAR",
+        "score": 76.8
+      },
+      {
+        "rank": 5,
+        "candidate_id": 202,
+        "name": "Surabhi Jaiprakash",
+        "score": 76.6
+      },
+      {
+        "rank": 6,
+        "candidate_id": 173,
+        "name": "Reshma Gholap",
+        "score": 74.7
+      },
+      {
+        "rank": 7,
+        "candidate_id": 208,
+        "name": "Vaishnavi Gatkal",
+        "score": 73.0
+      }
+    ],
+    "anomalies": [
+      "HR experience was duplicated in the routing packet as r1 and structured_role_1.",
+      "Candidate-level validation reported r1 HR experience as NO_MATCH while the duplicate structured_role_1 requirement was MATCH.",
+      "Several candidates were marked as matching semantic requirements despite candidate reranker scores below the configured threshold of 0.0 or null scores.",
+      "Some selected evidence chunks were weak or unrelated to the requirement they were assigned to. For example, some employee onboarding matches used evidence about employee records or HR documentation.",
+      "The full resume histories support the human relevance judgments even where the selected retrieval evidence was weak.",
+      "Candidate semantic validation returned 4 candidates, while evidence validation and qualification each returned 8. This difference should be investigated.",
+      "The system returned 7 candidates although the default requested count was 10."
+    ]
+  }
+},
+
+{
+  "query_id": "Q010",
+  "benchmark_query": "Find candidates with 2 years of experience in D365",
+  "run_query": "find candidates with 2 years of experience in d365",
+  "ground_truth": {
+    "requirements": [
+      {
+        "requirement_id": "d365_experience",
+        "text": "At least 2 years of experience in Microsoft Dynamics 365 (D365)",
+        "type": "SEMANTIC",
+        "match_mode": "HARD",
+        "mandatory": true,
+        "source_of_truth": "resume_evidence",
+        "minimum_relevant_experience_months": 24,
+        "relationship": "AND"
+      }
+    ],
+    "judgment_pool_scope": "returned_top_10_only",
+    "candidate_judgments": [
+      {
+        "rank": 1,
+        "candidate_id": 385,
+        "relevance": 2,
+        "evidence_basis": "Vishvendra Singh Gour has been a Techno-Functional Consultant at Infosys since May 2021. His experience explicitly includes developing customizations, reports, and workflow configurations using D365 F&O development tools. The dated role tenure exceeds 2 years."
+      },
+      {
+        "rank": 2,
+        "candidate_id": 322,
+        "relevance": 2,
+        "evidence_basis": "Shivani Shinkar has worked as an F&O Technical Consultant and has experience with Dynamics 365 Finance and Operations, including custom development, data migration, integrations, and D365 CRM customization. Her experience timeline supports more than 2 years."
+      },
+      {
+        "rank": 3,
+        "candidate_id": 261,
+        "relevance": 2,
+        "evidence_basis": "Raghul Murugan has multiple Microsoft Dynamics AX and D365 F&O Technical Consultant roles dating back to April 2021. His resume explicitly describes D365 F&O development, customization, debugging, and implementation projects. The experience exceeds 2 years, although some employment dates in the timeline overlap."
+      },
+      {
+        "rank": 4,
+        "candidate_id": 2,
+        "relevance": 1,
+        "evidence_basis": "Abhishek Mittal currently works as a Functional Consultant (D365 F&O), starting July 2025. His previous Manager (Finance) role from July 2022 to July 2025 mentions handling an end-to-end ERP migration and implementing D365 Finance and Operations. However, the resume does not establish that the entire 3-year Finance Manager tenure involved D365. The clearly dated D365 Functional Consultant role is only 15 months, so the mandatory 2-year threshold is not conclusively established."
+      },
+      {
+        "rank": 5,
+        "candidate_id": 308,
+        "relevance": 2,
+        "evidence_basis": "Saumya Raj has worked as a Microsoft D365 F&O Developer at Wipro since March 2023. His experience includes X++ development, customizing forms, workflows, data entities, SSRS reports, and developing a Q&A platform using D365 F&O. This exceeds the 2-year requirement."
+      },
+      {
+        "rank": 6,
+        "candidate_id": 34,
+        "relevance": 2,
+        "evidence_basis": "Ayush Sahu worked as a Technical Consultant at DaxArch Solutions from May 2022 to February 2025. His resume explicitly describes developing custom forms, SSRS reports, and automated unit testing in D365 F&O. This role alone provides more than 2 years of relevant experience."
+      },
+      {
+        "rank": 7,
+        "candidate_id": 74,
+        "relevance": 2,
+        "evidence_basis": "Janardhan Reddy P has extensive D365 F&O Functional Consultant experience, including Finance module implementation and support, D365 Finance support, procurement, inventory, and configuration work across multiple roles. His resume supports more than 2 years of D365 experience."
+      },
+      {
+        "rank": 8,
+        "candidate_id": 240,
+        "relevance": 2,
+        "evidence_basis": "Penchalakumar Damarapu has worked as a D365 F&O Technical Consultant at Wrexim Technologies since March 2022. His resume explicitly identifies this as his role and describes multiple years of D365 Finance and Operations project experience."
+      },
+      {
+        "rank": 9,
+        "candidate_id": 45,
+        "relevance": 2,
+        "evidence_basis": "Dakuri Prashanth Reddy has worked as a Microsoft Dynamics 365 F&O Technical Consultant and Technical Support Engineer at Sonata Software since September 2022. His resume describes D365 F&O technical support and Microsoft support project responsibilities, supporting more than 2 years of relevant experience."
+      },
+      {
+        "rank": 10,
+        "candidate_id": 379,
+        "relevance": 2,
+        "evidence_basis": "Vinay Kumar has worked as a Dynamics 365 Finance and Operations Technical Consultant at Sunbridge Software Services since April 2023. His responsibilities include D365 F&O development, AX2012-to-D365 upgrades, integrations, and data migrations. This exceeds 2 years of relevant experience."
+      }
+    ]
+  },
+  "run_observation": {
+    "requested_count": 10,
+    "count_explicit": false,
+    "returned_count": 10,
+    "route": "SEMANTIC",
+    "structured_requirements": {
+      "skills": [],
+      "roles": [],
+      "companies": [],
+      "min_experience_years": null,
+      "max_experience_years": null,
+      "relevant_experience_min_years": 2.0,
+      "experience_scope": "RELEVANT"
+    },
+    "semantic_requirements": [
+      "d365"
+    ],
+    "counts": {
+      "structured_candidates": 0,
+      "semantic_candidates": 61,
+      "union_candidates": 61,
+      "validated_candidates": 33,
+      "final_candidates": 10
+    },
+    "stage_counts": {
+      "semantic_retrieval": {
+        "output": 200
+      },
+      "chunk_reranking": {
+        "input": 160,
+        "output": 160
+      },
+      "candidate_consolidation": {
+        "input": 160,
+        "output": 61
+      },
+      "candidate_semantic_validation": {
+        "input": 61,
+        "output": 54
+      },
+      "evidence_validation": {
+        "input": 61,
+        "output": 50
+      },
+      "qualification": {
+        "input": 61,
+        "output": 33
+      },
+      "ranking": {
+        "input": 33,
+        "output": 10
+      }
+    },
+    "duration_seconds": 13.124448,
+    "ranked_candidates": [
+      {
+        "rank": 1,
+        "candidate_id": 385,
+        "name": "Vishvendra Singh Gour",
+        "score": 67.2
+      },
+      {
+        "rank": 2,
+        "candidate_id": 322,
+        "name": "SHIVANI SHINKAR",
+        "score": 66.9
+      },
+      {
+        "rank": 3,
+        "candidate_id": 261,
+        "name": "Raghul Murugan",
+        "score": 66.8
+      },
+      {
+        "rank": 4,
+        "candidate_id": 2,
+        "name": "ABHISHEK MITTAL",
+        "score": 66.6
+      },
+      {
+        "rank": 5,
+        "candidate_id": 308,
+        "name": "Saumya Raj",
+        "score": 66.6
+      },
+      {
+        "rank": 6,
+        "candidate_id": 34,
+        "name": "Ayush Sahu",
+        "score": 66.3
+      },
+      {
+        "rank": 7,
+        "candidate_id": 74,
+        "name": "Janardhan Reddy P",
+        "score": 66.2
+      },
+      {
+        "rank": 8,
+        "candidate_id": 240,
+        "name": "PENCHALAKUMAR DAMARAPU",
+        "score": 66.1
+      },
+      {
+        "rank": 9,
+        "candidate_id": 45,
+        "name": "Dakuri Prashanth Reddy",
+        "score": 66.1
+      },
+      {
+        "rank": 10,
+        "candidate_id": 379,
+        "name": "Vinay Kumar",
+        "score": 66.0
+      }
+    ],
+    "anomalies": [
+      "The query was routed as SEMANTIC even though it included a minimum of 2 years of relevant experience.",
+      "The flattened structured_requirements object had no minimum experience value, while the parsed requirements contained relevant_experience_min_years = 2.0.",
+      "The minimum relevant experience was attached to the semantic requirement and applied during qualification rather than as a structured pre-retrieval filter.",
+      "Candidate 2 was credited with 4 years 4 months of relevant D365 experience, although the evidence does not establish that the entire previous Finance Manager tenure involved D365. This is a potential false positive for the hard 2-year threshold.",
+      "Candidate 2 has total_experience_months = 2605, which is an implausible value and indicates a candidate experience-data or parsing issue.",
+      "Candidate 261 has overlapping current employment dates in the experience timeline, so its exact calculated experience duration should be treated cautiously.",
+      "Candidate 385 has a negative chunk reranker score of -7.069 while its candidate-level reranker score is 6.386 and above the configured threshold. The distinction between chunk-level and candidate-level scores should be made clear in validation logs.",
+      "The execution trace records 61 consolidated candidates, 54 candidate-semantic-validation outputs, 50 evidence-validation outputs, 33 qualified candidates, and 10 final results.",
+      "The final candidate scores are tightly clustered between 66.0 and 67.2 despite differences in experience strength and evidence quality."
+    ]
+  }
+}
+
+  
+
+  ]
+}
