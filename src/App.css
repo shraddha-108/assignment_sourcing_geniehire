@@ -11,7 +11,6 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-
   color: #172033;
   background: #f6f7fb;
   font-synthesis: none;
@@ -24,8 +23,8 @@ body {
   min-height: 100vh;
   background: #f6f7fb;
 }
-
 button,
+
 input {
   font: inherit;
 }
@@ -163,11 +162,11 @@ button {
   max-width: none;
   flex: 0 0 auto;
 }
-
 .has-search-results .hero-eyebrow,
 .has-search-results .hero h1,
 .has-search-results .hero-description,
 .has-search-results .search-examples,
+
 .has-search-results .search-capabilities {
   display: none;
 }
@@ -731,8 +730,8 @@ button {
   font-size: 10px;
   font-weight: 700;
 }
-
 .filter-scope-note,
+
 .filter-group-note {
   margin: 10px 0 0;
   color: #858c9b;
@@ -778,8 +777,8 @@ button {
   font-size: 11px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-
 .filter-dropdown-trigger:hover,
+
 .filter-dropdown-trigger.is-open {
   border-color: #a9a2f0;
   box-shadow: 0 0 0 3px rgba(104, 92, 224, 0.08);
@@ -1024,8 +1023,8 @@ button {
   font-weight: 800;
   white-space: nowrap;
 }
-
 .match-badge.perfect,
+
 .match-badge.strong {
   background: #eaf8f0;
   color: #2e9258;
@@ -1338,28 +1337,36 @@ button {
 }
 
 .profile-panel {
-  width: min(500px, 94vw);
+  width: min(520px, 80vw);
   height: 100%;
-  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: #fff;
   box-shadow: -12px 0 36px rgba(20, 28, 45, 0.14);
   animation: profile-slide-in 0.2s ease-out;
 }
 
 .profile-panel-topbar {
+  flex: 0 0 auto;
   min-height: 52px;
-  padding: 0 24px;
+  width: 100%;
+  padding: 0 16px 0 0;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #eceef3;
-  color: #778092;
-  font-size: 12px;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .profile-close {
   width: 32px;
   height: 32px;
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -1374,10 +1381,8 @@ button {
 }
 
 .profile-header {
+  flex: 0 0 auto;
   padding: 25px 28px 18px;
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
 }
 
 .profile-heading h2 {
@@ -1395,13 +1400,11 @@ button {
 }
 
 .profile-links {
+  flex: 0 0 auto;
   padding: 0 28px 18px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
-
 .profile-links a,
+
 .profile-resume-button {
   padding: 7px 10px;
   border: 1px solid #e4e6ed;
@@ -1412,19 +1415,17 @@ button {
   font-weight: 650;
   text-decoration: none;
 }
-
 .profile-links a:hover,
+
 .profile-resume-button:hover {
   border-color: #c9c4f5;
   background: #f9f8ff;
 }
 
 .profile-tabs {
+  flex: 0 0 auto;
+  min-width: 0;
   padding: 0 20px;
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid #e7e9ef;
-  overflow-x: auto;
 }
 
 .profile-tabs button {
@@ -1445,7 +1446,26 @@ button {
 }
 
 .profile-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.profile-tab-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 10px 28px 34px;
+  scrollbar-width: thin;
+  scrollbar-color: #d8dbea transparent;
+}
+
+.profile-tab-panel[hidden] {
+  display: none;
 }
 
 .profile-section {
@@ -1601,8 +1621,8 @@ button {
   font-size: 11px;
   font-weight: 650;
 }
-
 .result-message,
+
 .hybrid-info {
   display: none;
 }
@@ -1638,7 +1658,11 @@ button {
     animation: none;
   }
 }
-
+@media (max-width: 640px) {
+  .profile-panel {
+    width: 100%;
+  }
+}
 /* =========================
    EMPTY STATES
    ========================= */
@@ -1773,100 +1797,80 @@ button {
   .topbar {
     padding: 0 20px;
   }
-
   .topbar-status {
     display: none;
   }
-
   .main-content {
     width: min(100% - 28px, 1120px);
     padding-top: 45px;
   }
-
   .hero h1 {
     font-size: 40px;
     letter-spacing: -1.8px;
   }
-
   .hero-description {
     font-size: 14px;
   }
-
   .search-container {
     padding: 8px;
     flex-wrap: wrap;
   }
-
   .search-icon {
     margin-left: 7px;
   }
-
   .search-container input {
     width: calc(100% - 55px);
     flex: 1 1 calc(100% - 55px);
   }
-
   .search-button {
     width: 100%;
   }
-
   .results-header {
     align-items: flex-start;
     flex-direction: column;
   }
-
   .results-content-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
-
   .has-search-results .main-content {
     width: calc(100% - 28px);
     padding-top: 10px;
     padding-bottom: 10px;
   }
-
   .has-search-results .results-content-grid {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
     gap: 8px;
   }
-
   .has-search-results .result-filter-panel {
     height: auto;
     max-height: 175px;
   }
-
   .has-search-results .results-list-column {
     height: 100%;
   }
-
   .result-filter-panel {
     position: static;
     max-height: none;
   }
-
   .filter-group {
     display: inline-block;
     vertical-align: top;
     width: min(100%, 48%);
     margin-right: 1%;
   }
-
   .candidate-card {
     align-items: flex-start;
     flex-direction: column;
   }
-
   .candidate-actions {
     width: 100%;
   }
-
   .resume-button {
     width: 100%;
     justify-content: center;
   }
-
   .feature-row {
     flex-direction: column;
     align-items: flex-start;
@@ -1879,17 +1883,14 @@ button {
   .hero h1 {
     font-size: 34px;
   }
-
   .candidate-main {
     width: 100%;
   }
-
   .candidate-name-row {
     align-items: flex-start;
     flex-direction: column;
     gap: 6px;
   }
-
   .skill-item {
     width: 100%;
   }

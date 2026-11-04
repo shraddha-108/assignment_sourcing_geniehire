@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 
 const API_URL = "http://127.0.0.1:8000/search";
 const SPELLING_CHECK_URL = "http://127.0.0.1:8000/search/suggestion";
+const FILTER_SEARCH_URL = "http://127.0.0.1:8000/search/refine";
 const RESUME_API_URL = "http://127.0.0.1:8000/candidates";
 
 type MatchedSkill = {
@@ -12,6 +13,16 @@ type MatchedSkill = {
 };
 
 type ExperienceTimelineEntry = {
+  role?: string | null;
+  company?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_current?: boolean;
+  duration_months?: number | null;
+  description?: string | null;
+};
+
+type MatchedExperience = {
   role?: string | null;
   company?: string | null;
   start_date?: string | null;
@@ -88,6 +99,7 @@ type BackendCandidate = {
   summary?: string | null;
   total_experience_months?: number;
   experience_timeline?: ExperienceTimelineEntry[];
+  matched_experience?: MatchedExperience | null;
   education?: EducationEntry[];
   profile_skills?: string[];
   projects?: ProjectEntry[];
@@ -134,6 +146,7 @@ type Candidate = {
   summary: string | null;
   total_experience_months?: number;
   experience_timeline: ExperienceTimelineEntry[];
+  matched_experience: MatchedExperience | null;
   education: EducationEntry[];
   profile_skills: string[];
   projects: ProjectEntry[];
@@ -268,6 +281,19 @@ function normalizeExternalUrl(value?: string | null): string | null {
   }
 }
 
+type SelectedLocation = {
+  place_id: string;
+  label: string;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+};
+
+type LocationSuggestion = {
+  text: string;
+  properties: any;
+};
+
 type SeniorityBand = "Entry" | "Mid" | "Senior" | "Not specified";
 
 const SENIORITY_BANDS: SeniorityBand[] = [
@@ -282,6 +308,7 @@ function candidateSeniority(candidate: Candidate): SeniorityBand {
   if (months === undefined || months === null) return "Not specified";
   if (months < 36) return "Entry";
   if (months < 96) return "Mid";
+  if(months < 144) return "Senior";
   return "Senior";
 }
 
@@ -358,6 +385,90 @@ function evidenceSectionLabel(evidence: Evidence): string {
   if (type.includes("skill")) return "Skills";
   if (evidence.section_title?.trim()) return evidence.section_title.trim();
   return "Resume section";
+}
+
+function normalizeComparableText(value?: string | null): string {
+  return (value ?? "")
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function getMatchedExperience(
+  raw: BackendCandidate,
+  experienceTimeline: ExperienceTimelineEntry[],
+  matchedRequirements: MatchedRequirement[]
+): MatchedExperience | null {
+  if (raw.matched_experience) {
+    return raw.matched_experience;
+  }
+
+  const matched = matchedRequirements.filter(
+    (item) => item.matched && item.status !== "NO_MATCH"
+  );
+
+  const roleMatch = matched.find(
+    (item) =>
+      item.type === "role" ||
+      item.requirement_types?.includes("role")
+  );
+
+  const companyMatch = matched.find(
+    (item) =>
+      item.type === "company" ||
+      item.requirement_types?.includes("company")
+  );
+
+  const requestedRole = normalizeComparableText(
+    roleMatch?.candidate_value != null
+      ? String(roleMatch.candidate_value)
+      : roleMatch?.requirement
+  );
+
+  const requestedCompany = normalizeComparableText(
+    companyMatch?.candidate_value != null
+      ? String(companyMatch.candidate_value)
+      : companyMatch?.requirement
+  );
+
+  if (!requestedRole && !requestedCompany) {
+    return null;
+  }
+
+  const candidates = experienceTimeline.filter((experience) => {
+    const role = normalizeComparableText(experience.role);
+    const company = normalizeComparableText(experience.company);
+
+    const roleMatches =
+      !requestedRole || role === requestedRole;
+    const companyMatches =
+      !requestedCompany || company === requestedCompany;
+
+    return roleMatches && companyMatches;
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const sorted = [...candidates].sort((a, b) => {
+    // Prefer the currently held matching experience.
+    if (Boolean(a.is_current) !== Boolean(b.is_current)) {
+      return a.is_current ? -1 : 1;
+    }
+
+    // If both are current/non-current, prefer the most recent start date.
+    const aStart = a.start_date
+      ? new Date(a.start_date).getTime()
+      : Number.NEGATIVE_INFINITY;
+    const bStart = b.start_date
+      ? new Date(b.start_date).getTime()
+      : Number.NEGATIVE_INFINITY;
+
+    return bStart - aStart;
+  });
+
+  return sorted[0];
 }
 
 function normalizeCandidate(
@@ -485,6 +596,22 @@ function normalizeCandidate(
         )
       : [];
 
+  const experienceTimeline: ExperienceTimelineEntry[] =
+    Array.isArray(raw.experience_timeline)
+      ? raw.experience_timeline
+      : [];
+
+  const matchedRequirements: MatchedRequirement[] =
+    Array.isArray(raw.matched_requirements)
+      ? raw.matched_requirements
+      : [];
+
+  const matchedExperience = getMatchedExperience(
+    raw,
+    experienceTimeline,
+    matchedRequirements
+  );
+
   return {
     id: Number(id),
     name,
@@ -497,9 +624,8 @@ function normalizeCandidate(
     total_experience_months:
       raw.total_experience_months ??
       nestedCandidate.total_experience_months,
-    experience_timeline: Array.isArray(raw.experience_timeline)
-      ? raw.experience_timeline
-      : [],
+    experience_timeline: experienceTimeline,
+    matched_experience: matchedExperience,
     education: Array.isArray(raw.education) ? raw.education : [],
     profile_skills: Array.isArray(raw.profile_skills) ? raw.profile_skills : matchedSkills.map((item) => item.skill),
     projects: Array.isArray(raw.projects) ? raw.projects : [],
@@ -508,9 +634,7 @@ function normalizeCandidate(
     portfolio_url: raw.portfolio_url ?? null,
     matched_skills: matchedSkills,
     evidence,
-    matched_requirements: Array.isArray(raw.matched_requirements)
-      ? raw.matched_requirements
-      : [],
+    matched_requirements: matchedRequirements,
     explanation: Array.isArray(raw.explanation)
       ? raw.explanation.filter((item): item is string => typeof item === "string")
       : [],
@@ -537,12 +661,28 @@ function App() {
   const [selectedRoleFilters, setSelectedRoleFilters] = useState<string[]>([]);
   const [selectedSkillFilters, setSelectedSkillFilters] = useState<string[]>([]);
   const [selectedSeniorityFilters, setSelectedSeniorityFilters] = useState<SeniorityBand[]>([]);
-  const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
+  const [selectedLocationFilters, setSelectedLocationFilters] = useState<SelectedLocation[]>([]);
+  const [selectedCompanyFilters, setSelectedCompanyFilters] = useState<string[]>([]);
+  const [selectedDomainFilters, setSelectedDomainFilters] = useState<string[]>([]);
+  const [selectedMinExperience, setSelectedMinExperience] = useState<string>("");
+  const [selectedMaxExperience, setSelectedMaxExperience] = useState<string>("");
+  const [appliedRoleFilters, setAppliedRoleFilters] = useState<string[]>([]);
+  const [appliedSkillFilters, setAppliedSkillFilters] = useState<string[]>([]);
+  const [appliedSeniorityFilters, setAppliedSeniorityFilters] = useState<SeniorityBand[]>([]);
+  const [appliedLocationFilters, setAppliedLocationFilters] = useState<SelectedLocation[]>([]);
+  const [appliedCompanyFilters, setAppliedCompanyFilters] = useState<string[]>([]);
+  const [appliedDomainFilters, setAppliedDomainFilters] = useState<string[]>([]);
+  const [appliedMinExperience, setAppliedMinExperience] = useState<number | null>(null);
+  const [appliedMaxExperience, setAppliedMaxExperience] = useState<number | null>(null);
+  const [filterLoading, setFilterLoading] = useState(false);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [roleFilterSearch, setRoleFilterSearch] = useState("");
-  const [skillDropdownOpen, setSkillDropdownOpen] = useState(false);
   const [skillFilterSearch, setSkillFilterSearch] = useState("");
-  const roleDropdownRef = useRef<HTMLDivElement | null>(null);
-  const skillDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [locationFilterSearch, setLocationFilterSearch] = useState("");
+  const [locationSuggestions, setLocationSuggestions] = useState<LocationSuggestion[]>([]);
+  const [locationSuggestionsLoading, setLocationSuggestionsLoading] = useState(false);
+  const [locationAutocompleteError, setLocationAutocompleteError] = useState<string | null>(null);
+  const [companyFilterSearch, setCompanyFilterSearch] = useState("");
 
   function openProfile(candidate: Candidate) {
     console.info("[GenieHire] Candidate profile opened", {
@@ -571,30 +711,33 @@ function App() {
   }, [selectedProfile]);
 
   useEffect(() => {
-    if (!roleDropdownOpen && !skillDropdownOpen) return;
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        !roleDropdownRef.current?.contains(target) &&
-        !skillDropdownRef.current?.contains(target)
-      ) {
-        setRoleDropdownOpen(false);
-        setSkillDropdownOpen(false);
-      }
-    };
+    if (!filterPanelOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setRoleDropdownOpen(false);
-        setSkillDropdownOpen(false);
+        setSelectedRoleFilters(appliedRoleFilters);
+        setSelectedSkillFilters(appliedSkillFilters);
+        setSelectedSeniorityFilters(appliedSeniorityFilters);
+        setSelectedLocationFilters(appliedLocationFilters);
+        setSelectedCompanyFilters(appliedCompanyFilters);
+        setSelectedDomainFilters(appliedDomainFilters);
+        setSelectedMinExperience(appliedMinExperience === null ? "" : String(appliedMinExperience));
+        setSelectedMaxExperience(appliedMaxExperience === null ? "" : String(appliedMaxExperience));
+        setRoleFilterSearch("");
+        setSkillFilterSearch("");
+        setLocationFilterSearch("");
+        setLocationSuggestions([]);
+        setCompanyFilterSearch("");
+        setFilterPanelOpen(false);
       }
     };
-    document.addEventListener("mousedown", closeOnOutsideClick);
-    document.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", closeOnEscape);
     return () => {
-      document.removeEventListener("mousedown", closeOnOutsideClick);
-      document.removeEventListener("keydown", closeOnEscape);
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [roleDropdownOpen, skillDropdownOpen]);
+  }, [filterPanelOpen, appliedRoleFilters, appliedSkillFilters, appliedSeniorityFilters, appliedLocationFilters, appliedCompanyFilters, appliedDomainFilters, appliedMinExperience, appliedMaxExperience]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -605,6 +748,83 @@ function App() {
       });
     return () => controller.abort();
   }, []);
+
+
+  useEffect(() => {
+    const input = locationFilterSearch.trim();
+    const apiKey = (import.meta as any).env?.VITE_GEOAPIFY_API_KEY;
+    if (input.length < 2 || !filterPanelOpen) {
+      setLocationSuggestions([]);
+      setLocationSuggestionsLoading(false);
+      setLocationAutocompleteError(null);
+      return;
+    }
+    if (!apiKey) {
+      setLocationSuggestions([]);
+      setLocationAutocompleteError("Geoapify is not configured. Add VITE_GEOAPIFY_API_KEY to your frontend .env file.");
+      return;
+    }
+    let active = true;
+    const timeout = window.setTimeout(async () => {
+      try {
+        setLocationSuggestionsLoading(true);
+        setLocationAutocompleteError(null);
+        const params = new URLSearchParams({
+          text: input, format: "geojson", limit: "7", lang: "en",
+          filter: "countrycode:in", apiKey,
+        });
+        const response = await fetch(`https://api.geoapify.com/v1/geocode/autocomplete?${params.toString()}`);
+        if (!response.ok) throw new Error(`Geoapify request failed (${response.status}).`);
+        const payload = await response.json();
+        if (!active) return;
+        const suggestions: LocationSuggestion[] = (payload.features ?? [])
+          .map((feature: any) => {
+            const properties = feature.properties ?? {};
+            return { text: properties.formatted ?? properties.name ?? "", properties };
+          })
+          .filter((item: LocationSuggestion) => {
+            const p = item.properties;
+            const type = String(p.result_type ?? "").toLowerCase();
+            const usefulTypes = ["city", "town", "village", "municipality", "state", "country"];
+            return Boolean(item.text) && usefulTypes.includes(type) && Boolean(
+              p.city || p.town || p.village || p.municipality || p.state || p.country || p.name
+            );
+          });
+        setLocationSuggestions(suggestions);
+      } catch (error) {
+        if (active) {
+          setLocationSuggestions([]);
+          setLocationAutocompleteError(error instanceof Error ? error.message : "Unable to load location suggestions.");
+        }
+      } finally {
+        if (active) setLocationSuggestionsLoading(false);
+      }
+    }, 300);
+    return () => { active = false; window.clearTimeout(timeout); };
+  }, [locationFilterSearch, filterPanelOpen]);
+
+  function selectGeoapifyLocation(suggestion: LocationSuggestion) {
+    const p = suggestion.properties;
+    const resultType = String(p.result_type ?? "").toLowerCase();
+    const cityValue = p.city || p.town || p.village || p.municipality || null;
+    const stateValue = p.state || (resultType === "state" ? p.name : null) || null;
+    const countryValue = p.country || (resultType === "country" ? p.name : null) || null;
+    const selected: SelectedLocation = {
+      place_id: String(p.place_id || `${cityValue ?? ""}|${stateValue ?? ""}|${countryValue ?? ""}`),
+      label: String(p.formatted || suggestion.text),
+      city: cityValue ? String(cityValue) : null,
+      state: stateValue ? String(stateValue) : null,
+      country: countryValue ? String(countryValue) : null,
+    };
+    if (!selected.city && !selected.state && !selected.country) {
+      setLocationAutocompleteError("Choose a city, state, or country from the suggestions.");
+      return;
+    }
+    setSelectedLocationFilters((current) => current.some((item) => item.place_id === selected.place_id) ? current : [...current, selected]);
+    setLocationFilterSearch("");
+    setLocationSuggestions([]);
+    setLocationAutocompleteError(null);
+  }
 
   async function handleSearch(searchText = query, skipSpellingCheck = false) {
     if (
@@ -621,10 +841,25 @@ function App() {
     setSelectedRoleFilters([]);
     setSelectedSkillFilters([]);
     setSelectedSeniorityFilters([]);
-    setRoleDropdownOpen(false);
+    setSelectedLocationFilters([]);
+    setSelectedCompanyFilters([]);
+    setSelectedDomainFilters([]);
+    setSelectedMinExperience("");
+    setSelectedMaxExperience("");
+    setAppliedRoleFilters([]);
+    setAppliedSkillFilters([]);
+    setAppliedSeniorityFilters([]);
+    setAppliedLocationFilters([]);
+    setAppliedCompanyFilters([]);
+    setAppliedDomainFilters([]);
+    setAppliedMinExperience(null);
+    setAppliedMaxExperience(null);
+    setFilterPanelOpen(false);
     setRoleFilterSearch("");
-    setSkillDropdownOpen(false);
     setSkillFilterSearch("");
+    setLocationFilterSearch("");
+    setLocationSuggestions([]);
+    setCompanyFilterSearch("");
     setLoading(true);
     setSearchPhase(skipSpellingCheck ? "searching" : "checking");
 
@@ -845,41 +1080,269 @@ function App() {
   ) ?? [];
   const resultCount =
     data?.results.length ?? 0;
-  const availableRoles = [...new Map(
-    (data?.results ?? [])
-      .flatMap(candidateRoleValues)
-      .map((role) => [role.toLocaleLowerCase(), role] as const)
-  ).values()].sort((left, right) => left.localeCompare(right));
-  const visibleRoleOptions = availableRoles.filter((role) =>
-    roleFilterSearch.trim().length >= 2 &&
-    role.toLocaleLowerCase().includes(roleFilterSearch.trim().toLocaleLowerCase())
+  const availableSeniority: SeniorityBand[] = ["Entry", "Mid", "Senior"];
+  const DOMAIN_OPTIONS = [
+    "TECHNICAL",
+    "SALES",
+    "MARKETING",
+    "HR",
+    "FINANCE",
+    "OPERATIONS",
+    "CUSTOMER_SUCCESS",
+    "PRODUCT",
+    "GENERAL",
+  ];
+
+  const selectedMinExperienceNumber = selectedMinExperience.trim() === "" ? null : Number(selectedMinExperience);
+  const selectedMaxExperienceNumber = selectedMaxExperience.trim() === "" ? null : Number(selectedMaxExperience);
+  const validMinExperience = selectedMinExperienceNumber !== null && Number.isFinite(selectedMinExperienceNumber) && selectedMinExperienceNumber >= 0
+    ? selectedMinExperienceNumber : null;
+  const validMaxExperience = selectedMaxExperienceNumber !== null && Number.isFinite(selectedMaxExperienceNumber) && selectedMaxExperienceNumber >= 0
+    ? selectedMaxExperienceNumber : null;
+
+  const filtersEqual = (
+    left: {
+      roles: string[]; skills: string[]; seniority: SeniorityBand[]; locations: SelectedLocation[];
+      companies: string[]; domains: string[]; minExperience: number | null; maxExperience: number | null;
+    },
+    right: {
+      roles: string[]; skills: string[]; seniority: SeniorityBand[]; locations: SelectedLocation[];
+      companies: string[]; domains: string[]; minExperience: number | null; maxExperience: number | null;
+    },
+  ) =>
+    JSON.stringify(left.roles) === JSON.stringify(right.roles) &&
+    JSON.stringify(left.skills) === JSON.stringify(right.skills) &&
+    JSON.stringify(left.seniority) === JSON.stringify(right.seniority) &&
+    JSON.stringify(left.locations) === JSON.stringify(right.locations) &&
+    JSON.stringify(left.companies) === JSON.stringify(right.companies) &&
+    JSON.stringify(left.domains) === JSON.stringify(right.domains) &&
+    left.minExperience === right.minExperience &&
+    left.maxExperience === right.maxExperience;
+
+  const hasPendingFilters = !filtersEqual(
+    {
+      roles: selectedRoleFilters,
+      skills: selectedSkillFilters,
+      seniority: selectedSeniorityFilters,
+      locations: selectedLocationFilters,
+      companies: selectedCompanyFilters,
+      domains: selectedDomainFilters,
+      minExperience: validMinExperience,
+      maxExperience: validMaxExperience,
+    },
+    {
+      roles: appliedRoleFilters,
+      skills: appliedSkillFilters,
+      seniority: appliedSeniorityFilters,
+      locations: appliedLocationFilters,
+      companies: appliedCompanyFilters,
+      domains: appliedDomainFilters,
+      minExperience: appliedMinExperience,
+      maxExperience: appliedMaxExperience,
+    },
   );
-  const availableSkills = [...new Map(
-    (data?.results ?? [])
-      .flatMap(candidateSkillValues)
-      .map((skill) => [skill.toLocaleLowerCase(), skill] as const)
-  ).values()].sort((left, right) => left.localeCompare(right));
-  const visibleSkillOptions = availableSkills.filter((skill) =>
-    skill.toLocaleLowerCase().includes(skillFilterSearch.trim().toLocaleLowerCase())
-  );
-  const availableSeniority = SENIORITY_BANDS.filter((band) =>
-    (data?.results ?? []).some((candidate) => candidateSeniority(candidate) === band)
-  );
+
   const hasActiveFilters = Boolean(
-    selectedRoleFilters.length || selectedSkillFilters.length || selectedSeniorityFilters.length
+    appliedRoleFilters.length ||
+    appliedSkillFilters.length ||
+    appliedSeniorityFilters.length ||
+    appliedLocationFilters.length ||
+    appliedCompanyFilters.length ||
+    appliedDomainFilters.length ||
+    appliedMinExperience !== null ||
+    appliedMaxExperience !== null
   );
-  const filteredResults = (data?.results ?? []).filter((candidate) => {
-    const candidateRoles = candidateRoleValues(candidate).map((value) => value.toLocaleLowerCase());
-    const candidateSkills = candidateSkillValues(candidate).map((value) => value.toLocaleLowerCase());
-    const roleMatches = !selectedRoleFilters.length || selectedRoleFilters.some((role) =>
-      candidateRoles.includes(role.toLocaleLowerCase())
-    );
-    const skillMatches = !selectedSkillFilters.length || selectedSkillFilters.some((skill) =>
-      candidateSkills.includes(skill.toLocaleLowerCase())
-    );
-    const seniorityMatches = !selectedSeniorityFilters.length || selectedSeniorityFilters.includes(candidateSeniority(candidate));
-    return roleMatches && skillMatches && seniorityMatches;
-  });
+
+  const appliedFilterCount =
+    appliedRoleFilters.length +
+    appliedSkillFilters.length +
+    appliedSeniorityFilters.length +
+    appliedLocationFilters.length +
+    appliedCompanyFilters.length +
+    appliedDomainFilters.length +
+    (appliedMinExperience !== null ? 1 : 0) +
+    (appliedMaxExperience !== null ? 1 : 0);
+
+  function openFilterPanel() {
+    setSelectedRoleFilters(appliedRoleFilters);
+    setSelectedSkillFilters(appliedSkillFilters);
+    setSelectedSeniorityFilters(appliedSeniorityFilters);
+    setSelectedLocationFilters(appliedLocationFilters);
+    setSelectedCompanyFilters(appliedCompanyFilters);
+    setSelectedDomainFilters(appliedDomainFilters);
+    setSelectedMinExperience(appliedMinExperience === null ? "" : String(appliedMinExperience));
+    setSelectedMaxExperience(appliedMaxExperience === null ? "" : String(appliedMaxExperience));
+    setRoleFilterSearch("");
+    setSkillFilterSearch("");
+    setLocationFilterSearch("");
+    setLocationSuggestions([]);
+    setCompanyFilterSearch("");
+    setFilterPanelOpen(true);
+  }
+
+  function closeFilterPanel(discardChanges = true) {
+    if (discardChanges) {
+      setSelectedRoleFilters(appliedRoleFilters);
+      setSelectedSkillFilters(appliedSkillFilters);
+      setSelectedSeniorityFilters(appliedSeniorityFilters);
+      setSelectedLocationFilters(appliedLocationFilters);
+      setSelectedCompanyFilters(appliedCompanyFilters);
+      setSelectedDomainFilters(appliedDomainFilters);
+      setSelectedMinExperience(appliedMinExperience === null ? "" : String(appliedMinExperience));
+      setSelectedMaxExperience(appliedMaxExperience === null ? "" : String(appliedMaxExperience));
+    }
+    setRoleFilterSearch("");
+    setSkillFilterSearch("");
+    setLocationFilterSearch("");
+    setLocationSuggestions([]);
+    setCompanyFilterSearch("");
+    setFilterPanelOpen(false);
+  }
+
+  async function handleApplyFilters(nextFilters?: {
+    roles: string[];
+    skills: string[];
+    seniority: SeniorityBand[];
+    locations: SelectedLocation[];
+    companies: string[];
+    domains: string[];
+    minExperience: number | null;
+    maxExperience: number | null;
+  }) {
+    if (!data?.parsed || filterLoading || loading) return;
+
+    const roles = nextFilters?.roles ?? selectedRoleFilters;
+    const skills = nextFilters?.skills ?? selectedSkillFilters;
+    const seniority = nextFilters?.seniority ?? selectedSeniorityFilters;
+    const locations = nextFilters?.locations ?? selectedLocationFilters;
+    const companies = nextFilters?.companies ?? selectedCompanyFilters;
+    const domains = nextFilters?.domains ?? selectedDomainFilters;
+    // Preserve explicit null values: null means the recruiter removed that filter.
+    const minExperience = nextFilters ? nextFilters.minExperience : validMinExperience;
+    const maxExperience = nextFilters ? nextFilters.maxExperience : validMaxExperience;
+
+    if (minExperience !== null && maxExperience !== null && minExperience > maxExperience) {
+      setError("Minimum experience cannot be greater than maximum experience.");
+      return;
+    }
+
+    setFilterLoading(true);
+    setError(null);
+    const startTime = performance.now();
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 90000);
+
+    try {
+      const res = await fetch(FILTER_SEARCH_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          search_id: data.search_id,
+          filters: {
+            roles,
+            skills,
+            seniority,
+            locations,
+            companies,
+            domains,
+            min_experience_years: minExperience,
+            max_experience_years: maxExperience,
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Filter search failed (${res.status})`);
+      }
+
+      const response: BackendSearchResponse = await res.json();
+      const normalizedResults = Array.isArray(response.results)
+        ? response.results
+            .map(normalizeCandidate)
+            .filter(
+              (candidate): candidate is Candidate =>
+                candidate !== null && candidate.match_status !== "NO_MATCH"
+            )
+        : [];
+
+      setData({ ...response, results: normalizedResults });
+      setSelectedRoleFilters(roles);
+      setSelectedSkillFilters(skills);
+      setSelectedSeniorityFilters(seniority);
+      setSelectedLocationFilters(locations);
+      setSelectedCompanyFilters(companies);
+      setSelectedDomainFilters(domains);
+      setSelectedMinExperience(minExperience === null ? "" : String(minExperience));
+      setSelectedMaxExperience(maxExperience === null ? "" : String(maxExperience));
+      setAppliedRoleFilters(roles);
+      setAppliedSkillFilters(skills);
+      setAppliedSeniorityFilters(seniority);
+      setAppliedLocationFilters(locations);
+      setAppliedCompanyFilters(companies);
+      setAppliedDomainFilters(domains);
+      setAppliedMinExperience(minExperience);
+      setAppliedMaxExperience(maxExperience);
+      setSearchTime(Number(((performance.now() - startTime) / 1000).toFixed(3)));
+      setApiStatus("connected");
+      setFilterPanelOpen(false);
+      setRoleFilterSearch("");
+      setSkillFilterSearch("");
+      setLocationFilterSearch("");
+        setLocationSuggestions([]);
+      setCompanyFilterSearch("");
+    } catch (e) {
+      setError(
+        e instanceof DOMException && e.name === "AbortError"
+          ? "Filter search is taking longer than expected. Please try again shortly."
+          : e instanceof Error
+            ? e.message
+            : "Unable to apply filters."
+      );
+    } finally {
+      window.clearTimeout(timeoutId);
+      setFilterLoading(false);
+    }
+  }
+
+  type AppliedFilterKey =
+    | "role"
+    | "skill"
+    | "location"
+    | "company"
+    | "domain"
+    | "seniority"
+    | "minExperience"
+    | "maxExperience";
+
+  function removeAppliedFilter(filter: AppliedFilterKey, value?: string) {
+    const nextFilters = {
+      roles: filter === "role" ? appliedRoleFilters.filter((item) => item !== value) : appliedRoleFilters,
+      skills: filter === "skill" ? appliedSkillFilters.filter((item) => item !== value) : appliedSkillFilters,
+      seniority: filter === "seniority" ? appliedSeniorityFilters.filter((item) => item !== value) : appliedSeniorityFilters,
+      locations: filter === "location" ? appliedLocationFilters.filter((item) => item.place_id !== value) : appliedLocationFilters,
+      companies: filter === "company" ? appliedCompanyFilters.filter((item) => item !== value) : appliedCompanyFilters,
+      domains: filter === "domain" ? appliedDomainFilters.filter((item) => item !== value) : appliedDomainFilters,
+      minExperience: filter === "minExperience" ? null : appliedMinExperience,
+      maxExperience: filter === "maxExperience" ? null : appliedMaxExperience,
+    };
+
+    void handleApplyFilters(nextFilters);
+  }
+
+  function clearAllFilters() {
+    void handleApplyFilters({
+      roles: [],
+      skills: [],
+      seniority: [],
+      locations: [],
+      companies: [],
+      domains: [],
+      minExperience: null,
+      maxExperience: null,
+    });
+  }
+
   const profileLinkedInUrl = normalizeExternalUrl(selectedProfile?.linkedin_url);
   const profileGitHubUrl = normalizeExternalUrl(selectedProfile?.github_url);
   const profilePortfolioUrl = normalizeExternalUrl(selectedProfile?.portfolio_url);
@@ -1199,6 +1662,66 @@ function App() {
                 ))}
               </div>
 
+              {hasActiveFilters && (
+                <div className="requirement-bar" aria-label="Applied filters">
+                  <span className="criteria-heading">Filters</span>
+                  {appliedRoleFilters.map((role) => (
+                    <span className="requirement-pill" key={`filter-role-${role}`}>
+                      {role}
+                      <button type="button" aria-label={`Remove role filter ${role}`} onClick={() => removeAppliedFilter("role", role)} disabled={filterLoading} style={{ marginLeft: "6px", border: 0, background: "transparent", cursor: filterLoading ? "not-allowed" : "pointer" }}>×</button>
+                    </span>
+                  ))}
+                  {appliedSkillFilters.map((skill) => {
+                    const alreadyInBaseQuery = (requirements?.skills ?? []).some((baseSkill) => baseSkill.trim().toLocaleLowerCase() === skill.trim().toLocaleLowerCase());
+                    return alreadyInBaseQuery ? null : (
+                      <span className="requirement-pill" key={`filter-skill-${skill}`}>
+                        {skill}
+                        <button type="button" aria-label={`Remove skill filter ${skill}`} onClick={() => removeAppliedFilter("skill", skill)} disabled={filterLoading} style={{ marginLeft: "6px", border: 0, background: "transparent", cursor: filterLoading ? "not-allowed" : "pointer" }}>×</button>
+                      </span>
+                    );
+                  })}
+                  {appliedLocationFilters.map((location) => (
+                    <span className="requirement-pill" key={`filter-location-${location.place_id}`}>
+                      {location.label} · Candidate location
+                      <button type="button" aria-label={`Remove location filter ${location.label}`} onClick={() => removeAppliedFilter("location", location.place_id)} disabled={filterLoading} style={{ marginLeft: "6px", border: 0, background: "transparent", cursor: filterLoading ? "not-allowed" : "pointer" }}>×</button>
+                    </span>
+                  ))}
+                  {appliedCompanyFilters.map((company) => (
+                    <span className="requirement-pill" key={`filter-company-${company}`}>
+                      {company}
+                      <button type="button" aria-label={`Remove company filter ${company}`} onClick={() => removeAppliedFilter("company", company)} disabled={filterLoading} style={{ marginLeft: "6px", border: 0, background: "transparent", cursor: filterLoading ? "not-allowed" : "pointer" }}>×</button>
+                    </span>
+                  ))}
+                  {appliedDomainFilters.map((domain) => (
+                    <span className="requirement-pill" key={`filter-domain-${domain}`}>
+                      {domain.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase())}
+                      <button type="button" aria-label={`Remove domain filter ${domain}`} onClick={() => removeAppliedFilter("domain", domain)} disabled={filterLoading} style={{ marginLeft: "6px", border: 0, background: "transparent", cursor: filterLoading ? "not-allowed" : "pointer" }}>×</button>
+                    </span>
+                  ))}
+                  {appliedMinExperience !== null && (
+                    <span className="requirement-pill">
+                      {appliedMinExperience}+ years experience
+                      <button type="button" aria-label="Remove minimum experience filter" onClick={() => removeAppliedFilter("minExperience")} disabled={filterLoading} style={{ marginLeft: "6px", border: 0, background: "transparent", cursor: filterLoading ? "not-allowed" : "pointer" }}>×</button>
+                    </span>
+                  )}
+                  {appliedMaxExperience !== null && (
+                    <span className="requirement-pill">
+                      Up to {appliedMaxExperience} years experience
+                      <button type="button" aria-label="Remove maximum experience filter" onClick={() => removeAppliedFilter("maxExperience")} disabled={filterLoading} style={{ marginLeft: "6px", border: 0, background: "transparent", cursor: filterLoading ? "not-allowed" : "pointer" }}>×</button>
+                    </span>
+                  )}
+                  {appliedSeniorityFilters.map((band) => (
+                    <span className="requirement-pill" key={`filter-seniority-${band}`}>
+                      {band}
+                      <button type="button" aria-label={`Remove seniority filter ${band}`} onClick={() => removeAppliedFilter("seniority", band)} disabled={filterLoading} style={{ marginLeft: "6px", border: 0, background: "transparent", cursor: filterLoading ? "not-allowed" : "pointer" }}>×</button>
+                    </span>
+                  ))}
+                  <button type="button" onClick={clearAllFilters} disabled={filterLoading} style={{ border: 0, background: "transparent", color: "#6d28d9", fontSize: "12px", fontWeight: 700, cursor: filterLoading ? "not-allowed" : "pointer", padding: "4px 6px" }}>
+                    {filterLoading ? "Updating…" : "Clear all"}
+                  </button>
+                </div>
+              )}
+
               {data.parsed.assumptions && data.parsed.assumptions.length > 0 && (
                 <div className="assumption-info">
                   <strong>Search assumptions</strong>
@@ -1236,189 +1759,473 @@ function App() {
                 </div>
               )}
 
-              {resultCount > 0 ? (
-                <div className="results-content-grid">
-                  <aside className="result-filter-panel" aria-label="Filter search results">
-                    <div className="filter-panel-heading">
-                      <div>
-                        <h3>Filters</h3>
-                        <span>{filteredResults.length} of {resultCount} shown</span>
-                      </div>
+              <>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "16px",
+                      marginBottom: "16px",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                      <strong style={{ fontSize: "15px", color: "#202333" }}>
+                        Matches ({resultCount})
+                      </strong>
                       {hasActiveFilters && (
-                        <button
-                          className="filter-clear-button"
-                          type="button"
-                          onClick={() => {
-                            setSelectedRoleFilters([]);
-                            setSelectedSkillFilters([]);
-                            setSelectedSeniorityFilters([]);
-                            setRoleDropdownOpen(false);
-                            setSkillDropdownOpen(false);
-                            setRoleFilterSearch("");
-                            setSkillFilterSearch("");
-                          }}
-                        >
-                          Clear
-                        </button>
+                        <span style={{ fontSize: "12px", color: "#777b8e" }}>
+                          {appliedFilterCount} filter{appliedFilterCount === 1 ? "" : "s"} applied
+                        </span>
                       )}
                     </div>
 
-                    <p className="filter-scope-note">Filters apply to the candidates returned for this search.</p>
+                    <button
+                      type="button"
+                      onClick={openFilterPanel}
+                      disabled={filterLoading || loading}
+                      aria-haspopup="dialog"
+                      aria-expanded={filterPanelOpen}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        border: "1px solid #d8d9e4",
+                        borderRadius: "10px",
+                        background: "#ffffff",
+                        color: "#242638",
+                        padding: "9px 14px",
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        boxShadow: "0 1px 2px rgba(24, 27, 45, 0.05)",
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 6h16M7 12h10M10 18h4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      </svg>
+                      <span>Filters</span>
+                      {appliedFilterCount > 0 && (
+                        <span
+                          style={{
+                            minWidth: "20px",
+                            height: "20px",
+                            padding: "0 6px",
+                            borderRadius: "999px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            background: "#efe8ff",
+                            color: "#6d28d9",
+                            fontSize: "11px",
+                            fontWeight: 800,
+                          }}
+                        >
+                          {appliedFilterCount}
+                        </span>
+                      )}
+                    </button>
+                  </div>
 
-                    <fieldset className="filter-group">
-                      <legend>Role</legend>
-                      {availableRoles.length ? (
-                        <div className="filter-dropdown" ref={roleDropdownRef}>
+                  {filterPanelOpen && (
+                    <div
+                      role="presentation"
+                      onMouseDown={(event) => {
+                        if (event.target === event.currentTarget) closeFilterPanel(true);
+                      }}
+                      style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 1000,
+                        background: "rgba(20, 22, 35, 0.30)",
+                        backdropFilter: "blur(2px)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: "24px",
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      <aside
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="filter-panel-title"
+                        onMouseDown={(event) => event.stopPropagation()}
+                        className="result-filter-panel"
+                        style={{
+                          width: "min(520px, 94vw)",
+                          maxHeight: "min(720px, 88vh)",
+                          background: "#ffffff",
+                          border: "1px solid #e1e2ec",
+                          borderRadius: "18px",
+                          boxShadow: "0 24px 70px rgba(20, 22, 35, 0.22)",
+                          overflow: "hidden",
+                          display: "flex",
+                          flexDirection: "column",
+                          boxSizing: "border-box",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            justifyContent: "space-between",
+                            gap: "16px",
+                            padding: "22px 24px 18px",
+                            borderBottom: "1px solid #ececf2",
+                            background: "#ffffff",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <div>
+                            <h2 id="filter-panel-title" style={{ margin: 0, fontSize: "20px", fontWeight: 800, color: "#202333" }}>
+                              Filters
+                            </h2>
+                            <p style={{ margin: "6px 0 0", fontSize: "12px", lineHeight: 1.5, color: "#777b8e" }}>
+                              Select your filters, then apply them to run a refined search.
+                            </p>
+                          </div>
                           <button
-                            className={`filter-dropdown-trigger${roleDropdownOpen ? " is-open" : ""}`}
                             type="button"
-                            aria-expanded={roleDropdownOpen}
-                            aria-controls="role-filter-options"
-                            onClick={() => {
-                              setRoleDropdownOpen((open) => !open);
-                              setSkillDropdownOpen(false);
+                            aria-label="Close filters"
+                            onClick={() => closeFilterPanel(true)}
+                            style={{
+                              width: "36px",
+                              height: "36px",
+                              flexShrink: 0,
+                              border: "1px solid #e1e2ec",
+                              borderRadius: "10px",
+                              background: "#f7f7fa",
+                              color: "#4d5061",
+                              fontSize: "21px",
+                              lineHeight: 1,
+                              cursor: "pointer",
                             }}
                           >
-                            <span>
-                              {selectedRoleFilters.length
-                                ? `${selectedRoleFilters.length} role${selectedRoleFilters.length === 1 ? "" : "s"} selected`
-                                : "Select roles"}
-                            </span>
-                            <span className="filter-dropdown-chevron" aria-hidden="true">⌄</span>
+                            ×
                           </button>
-                          {roleDropdownOpen && (
-                            <div className="filter-dropdown-menu" id="role-filter-options">
-                              <input
-                                className="filter-dropdown-search"
-                                type="search"
-                                value={roleFilterSearch}
-                                onChange={(event) => setRoleFilterSearch(event.target.value)}
-                                placeholder="Search role titles"
-                                aria-label="Search available roles"
-                              />
-                              <div className="filter-dropdown-options">
-                                {roleFilterSearch.trim().length < 2 ? (
-                                  <span className="filter-unavailable">Type at least 2 characters to see title suggestions</span>
-                                ) : visibleRoleOptions.length ? visibleRoleOptions.map((role) => (
-                                  <label className="filter-option" key={role}>
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedRoleFilters.includes(role)}
-                                      onChange={() => setSelectedRoleFilters((current) =>
-                                        current.includes(role)
-                                          ? current.filter((item) => item !== role)
-                                          : [...current, role]
-                                      )}
-                                    />
-                                    <span>{role}</span>
-                                  </label>
-                                )) : (
-                                  <span className="filter-unavailable">No roles match this search</span>
+                        </div>
+
+                        <div
+                          style={{
+                            padding: "22px 24px 8px",
+                            overflowY: "auto",
+                            flex: 1,
+                            minHeight: 0,
+                          }}
+                        >
+                          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+                            <fieldset className="filter-group">
+                              <legend style={{ fontWeight: 700, color: "#202333" }}>Role</legend>
+                              <div className="manual-role-filter">
+                                <input
+                                  className="filter-dropdown-search"
+                                  type="text"
+                                  value={roleFilterSearch}
+                                  onChange={(event) => setRoleFilterSearch(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      const role = roleFilterSearch.trim();
+                                      if (role && !selectedRoleFilters.some((item) => item.toLocaleLowerCase() === role.toLocaleLowerCase())) {
+                                        setSelectedRoleFilters((current) => [...current, role]);
+                                        setRoleFilterSearch("");
+                                      }
+                                    }
+                                    if (event.key === "Backspace" && !roleFilterSearch.trim() && selectedRoleFilters.length > 0) {
+                                      setSelectedRoleFilters((current) => current.slice(0, -1));
+                                    }
+                                  }}
+                                  placeholder="Type a role and press Enter"
+                                  aria-label="Add a role filter"
+                                />
+                                {selectedRoleFilters.length > 0 && (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: "7px", marginTop: "8px" }}>
+                                    {selectedRoleFilters.map((role) => (
+                                      <span key={role} style={{ display: "inline-flex", alignItems: "center", gap: "7px", minHeight: "28px", padding: "4px 7px 4px 10px", border: "1px solid #d9dbe7", borderRadius: "8px", background: "#f7f7fb", color: "#4b4e60", fontSize: "12px", fontWeight: 600, lineHeight: 1 }}>
+                                        <span>{role}</span>
+                                        <button type="button" aria-label={`Remove ${role}`} onClick={() => setSelectedRoleFilters((current) => current.filter((item) => item !== role))} style={{ width: "18px", height: "18px", padding: 0, border: 0, background: "transparent", color: "#5f6272", cursor: "pointer", fontSize: "15px" }}>×</button>
+                                      </span>
+                                    ))}
+                                  </div>
                                 )}
                               </div>
-                              {selectedRoleFilters.length > 0 && (
-                                <button
-                                  className="filter-dropdown-clear"
-                                  type="button"
-                                  onClick={() => setSelectedRoleFilters([])}
-                                >
-                                  Clear selected roles
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ) : <span className="filter-unavailable">No role data in these results</span>}
-                    </fieldset>
+                            </fieldset>
 
-                    <fieldset className="filter-group">
-                      <legend>Skills</legend>
-                      {availableSkills.length ? (
-                        <div className="filter-dropdown" ref={skillDropdownRef}>
+                            <fieldset className="filter-group">
+                              <legend style={{ fontWeight: 700, color: "#202333" }}>Skills</legend>
+                              <div className="manual-skill-filter">
+                                <input
+                                  className="filter-dropdown-search"
+                                  type="text"
+                                  value={skillFilterSearch}
+                                  onChange={(event) => setSkillFilterSearch(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      const skill = skillFilterSearch.trim();
+                                      if (skill && !selectedSkillFilters.some((item) => item.toLocaleLowerCase() === skill.toLocaleLowerCase())) {
+                                        setSelectedSkillFilters((current) => [...current, skill]);
+                                        setSkillFilterSearch("");
+                                      }
+                                    }
+                                    if (event.key === "Backspace" && !skillFilterSearch.trim() && selectedSkillFilters.length > 0) {
+                                      setSelectedSkillFilters((current) => current.slice(0, -1));
+                                    }
+                                  }}
+                                  placeholder="Type a skill and press Enter"
+                                  aria-label="Add a skill filter"
+                                />
+                                {selectedSkillFilters.length > 0 && (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: "7px", marginTop: "8px" }}>
+                                    {selectedSkillFilters.map((skill) => (
+                                      <span key={skill} style={{ display: "inline-flex", alignItems: "center", gap: "7px", minHeight: "28px", padding: "4px 7px 4px 10px", border: "1px solid #d9dbe7", borderRadius: "8px", background: "#f7f7fb", color: "#4b4e60", fontSize: "12px", fontWeight: 600, lineHeight: 1 }}>
+                                        <span>{skill}</span>
+                                        <button type="button" aria-label={`Remove ${skill}`} onClick={() => setSelectedSkillFilters((current) => current.filter((item) => item !== skill))} style={{ width: "18px", height: "18px", padding: 0, border: 0, background: "transparent", color: "#5f6272", cursor: "pointer", fontSize: "15px" }}>×</button>
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </fieldset>
+
+                            <fieldset className="filter-group">
+                              <legend style={{ fontWeight: 700, color: "#202333" }}>Location</legend>
+                              <div style={{ position: "relative" }}>
+                                <input
+                                  className="filter-dropdown-search"
+                                  type="text"
+                                  value={locationFilterSearch}
+                                  onChange={(event) => setLocationFilterSearch(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" && locationSuggestions.length > 0) {
+                                      event.preventDefault();
+                                      selectGeoapifyLocation(locationSuggestions[0]);
+                                    }
+                                    if (event.key === "Escape") setLocationSuggestions([]);
+                                    if (event.key === "Backspace" && !locationFilterSearch.trim() && selectedLocationFilters.length > 0) {
+                                      setSelectedLocationFilters((current) => current.slice(0, -1));
+                                    }
+                                  }}
+                                  placeholder="Search city or locality"
+                                  aria-label="Search for a candidate location"
+                                  autoComplete="off"
+                                />
+                                {(locationSuggestionsLoading || locationSuggestions.length > 0 || locationAutocompleteError) && (
+                                  <div
+                                    role="listbox"
+                                    style={{
+                                      position: "absolute",
+                                      zIndex: 30,
+                                      top: "calc(100% + 5px)",
+                                      left: 0,
+                                      right: 0,
+                                      background: "#fff",
+                                      border: "1px solid #d9dce8",
+                                      borderRadius: "9px",
+                                      boxShadow: "0 8px 24px rgba(20, 25, 45, 0.12)",
+                                      maxHeight: "220px",
+                                      overflowY: "auto",
+                                    }}
+                                  >
+                                    {locationSuggestionsLoading && (
+                                      <div style={{ padding: "11px 13px", color: "#73788b", fontSize: "13px" }}>Searching locations…</div>
+                                    )}
+                                    {locationAutocompleteError && (
+                                      <div style={{ padding: "11px 13px", color: "#b42318", fontSize: "12px" }}>{locationAutocompleteError}</div>
+                                    )}
+                                    {locationSuggestions.map((suggestion, index) => (
+                                      <button
+                                        type="button"
+                                        role="option"
+                                        aria-selected="false"
+                                        key={`${suggestion.properties?.place_id ?? suggestion.text}-${index}`}
+                                        onMouseDown={(event) => event.preventDefault()}
+                                        onClick={() => selectGeoapifyLocation(suggestion)}
+                                        style={{
+                                          display: "block",
+                                          width: "100%",
+                                          padding: "11px 13px",
+                                          border: 0,
+                                          borderBottom: "1px solid #f0f1f5",
+                                          background: "#fff",
+                                          color: "#25283a",
+                                          textAlign: "left",
+                                          cursor: "pointer",
+                                          fontSize: "13px",
+                                        }}
+                                      >
+                                        <span style={{ display: "flex", alignItems: "center", gap: "9px" }}>
+                                          <span aria-hidden="true">⌖</span>
+                                          <span>{suggestion.text}</span>
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                             
+                              {selectedLocationFilters.length > 0 && (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: "7px", marginTop: "8px" }}>
+                                  {selectedLocationFilters.map((location) => (
+                                    <span className="requirement-pill" key={location.place_id}>
+                                      {location.label}
+                                      <button type="button" aria-label={`Remove ${location.label}`} onClick={() => setSelectedLocationFilters((current) => current.filter((item) => item.place_id !== location.place_id))} style={{ marginLeft: "6px", border: 0, background: "transparent", cursor: "pointer" }}>×</button>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </fieldset>
+
+                            <fieldset className="filter-group">
+                              <legend style={{ fontWeight: 700, color: "#202333" }}>Experience</legend>
+                              <p className="filter-group-note">Filter by total professional experience.</p>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                                <input className="filter-dropdown-search" type="number" min="0" step="0.5" value={selectedMinExperience} onChange={(event) => setSelectedMinExperience(event.target.value)} placeholder="Min years" aria-label="Minimum experience in years" />
+                                <input className="filter-dropdown-search" type="number" min="0" step="0.5" value={selectedMaxExperience} onChange={(event) => setSelectedMaxExperience(event.target.value)} placeholder="Max years" aria-label="Maximum experience in years" />
+                              </div>
+                            </fieldset>
+
+                            <fieldset className="filter-group">
+                              <legend style={{ fontWeight: 700, color: "#202333" }}>Seniority</legend>
+                              <p className="filter-group-note">Based on total experience</p>
+                              {availableSeniority.map((band) => (
+                                <label className="filter-option" key={band}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedSeniorityFilters.includes(band)}
+                                    onChange={() => setSelectedSeniorityFilters((current) => current.includes(band) ? current.filter((item) => item !== band) : [...current, band])}
+                                  />
+                                  <span>{band}{band === "Entry" ? " · 0–2 years" : band === "Mid" ? " · 3–7 years" : " · 8+ years"}</span>
+                                </label>
+                              ))}
+                            </fieldset>
+
+                            <fieldset className="filter-group">
+                              <legend style={{ fontWeight: 700, color: "#202333" }}>Company</legend>
+                              <input
+                                className="filter-dropdown-search"
+                                type="text"
+                                value={companyFilterSearch}
+                                onChange={(event) => setCompanyFilterSearch(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    const company = companyFilterSearch.trim();
+                                    if (company && !selectedCompanyFilters.some((item) => item.toLocaleLowerCase() === company.toLocaleLowerCase())) {
+                                      setSelectedCompanyFilters((current) => [...current, company]);
+                                      setCompanyFilterSearch("");
+                                    }
+                                  }
+                                  if (event.key === "Backspace" && !companyFilterSearch.trim() && selectedCompanyFilters.length > 0) {
+                                    setSelectedCompanyFilters((current) => current.slice(0, -1));
+                                  }
+                                }}
+                                placeholder="Type a company and press Enter"
+                                aria-label="Add a company filter"
+                              />
+                              {selectedCompanyFilters.length > 0 && (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: "7px", marginTop: "8px" }}>
+                                  {selectedCompanyFilters.map((company) => (
+                                    <span className="requirement-pill" key={company}>
+                                      {company}
+                                      <button type="button" aria-label={`Remove ${company}`} onClick={() => setSelectedCompanyFilters((current) => current.filter((item) => item !== company))} style={{ marginLeft: "6px", border: 0, background: "transparent", cursor: "pointer" }}>×</button>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </fieldset>
+
+                            <fieldset className="filter-group">
+                              <legend style={{ fontWeight: 700, color: "#202333" }}>Domain</legend>
+                              {DOMAIN_OPTIONS.map((domain) => (
+                                <label className="filter-option" key={domain}>
+                                  <input type="checkbox" checked={selectedDomainFilters.includes(domain)} onChange={() => setSelectedDomainFilters((current) => current.includes(domain) ? current.filter((item) => item !== domain) : [...current, domain])} />
+                                  <span>{domain.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase())}</span>
+                                </label>
+                              ))}
+                            </fieldset>
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            padding: "14px 24px 18px",
+                            background: "#ffffff",
+                            borderTop: "1px solid #ececf2",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: "12px",
+                            flexShrink: 0,
+                          }}
+                        >
                           <button
-                            className={`filter-dropdown-trigger${skillDropdownOpen ? " is-open" : ""}`}
                             type="button"
-                            aria-expanded={skillDropdownOpen}
-                            aria-controls="skill-filter-options"
-                            onClick={() => {
-                              setSkillDropdownOpen((open) => !open);
-                              setRoleDropdownOpen(false);
+                            onClick={clearAllFilters}
+                            disabled={(!hasActiveFilters && !hasPendingFilters) || filterLoading}
+                            style={{
+                              border: 0,
+                              background: "transparent",
+                              color: "#6d28d9",
+                              fontSize: "13px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              padding: "10px 2px",
+                              opacity: (!hasActiveFilters && !hasPendingFilters) || filterLoading ? 0.45 : 1,
                             }}
                           >
-                            <span>
-                              {selectedSkillFilters.length
-                                ? `${selectedSkillFilters.length} skill${selectedSkillFilters.length === 1 ? "" : "s"} selected`
-                                : "Select skills"}
-                            </span>
-                            <span className="filter-dropdown-chevron" aria-hidden="true">⌄</span>
+                            Clear all
                           </button>
-                          {skillDropdownOpen && (
-                            <div className="filter-dropdown-menu" id="skill-filter-options">
-                              <input
-                                className="filter-dropdown-search"
-                                type="search"
-                                value={skillFilterSearch}
-                                onChange={(event) => setSkillFilterSearch(event.target.value)}
-                                placeholder="Search skills"
-                                aria-label="Search available skills"
-                              />
-                              <div className="filter-dropdown-options">
-                                {visibleSkillOptions.length ? visibleSkillOptions.map((skill) => (
-                                  <label className="filter-option" key={skill}>
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedSkillFilters.includes(skill)}
-                                      onChange={() => setSelectedSkillFilters((current) =>
-                                        current.includes(skill)
-                                          ? current.filter((item) => item !== skill)
-                                          : [...current, skill]
-                                      )}
-                                    />
-                                    <span>{skill}</span>
-                                  </label>
-                                )) : (
-                                  <span className="filter-unavailable">No skills match this search</span>
-                                )}
-                              </div>
-                              {selectedSkillFilters.length > 0 && (
-                                <button
-                                  className="filter-dropdown-clear"
-                                  type="button"
-                                  onClick={() => setSelectedSkillFilters([])}
-                                >
-                                  Clear selected skills
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ) : <span className="filter-unavailable">No skill data in these results</span>}
-                    </fieldset>
 
-                    <fieldset className="filter-group">
-                      <legend>Seniority</legend>
-                      <p className="filter-group-note">Based on total experience</p>
-                      {availableSeniority.map((band) => (
-                        <label className="filter-option" key={band}>
-                          <input
-                            type="checkbox"
-                            checked={selectedSeniorityFilters.includes(band)}
-                            onChange={() => setSelectedSeniorityFilters((current) =>
-                              current.includes(band)
-                                ? current.filter((item) => item !== band)
-                                : [...current, band]
-                            )}
-                          />
-                          <span>{band}{band === "Entry" ? " · 0–2 years" : band === "Mid" ? " · 3–7 years" : band === "Senior" ? " · 8+ years" : ""}</span>
-                        </label>
-                      ))}
-                    </fieldset>
-                  </aside>
+                          <div style={{ display: "flex", gap: "8px" }}>
+                            <button
+                              type="button"
+                              onClick={() => closeFilterPanel(true)}
+                              disabled={filterLoading}
+                              style={{
+                                border: "1px solid #d8d9e4",
+                                borderRadius: "9px",
+                                background: "#fff",
+                                color: "#36394a",
+                                padding: "10px 15px",
+                                fontSize: "13px",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                              }}
+                            >
+                              Cancel
+                            </button>
+
+                            <button
+                              type="button"
+                              className="filter-apply-button"
+                              disabled={!hasPendingFilters || filterLoading}
+                              onClick={() => void handleApplyFilters()}
+                              style={{
+                                border: "1px solid #171a2b",
+                                borderRadius: "9px",
+                                background: !hasPendingFilters || filterLoading ? "#e9e9ee" : "#171a2b",
+                                color: !hasPendingFilters || filterLoading ? "#9295a4" : "#ffffff",
+                                padding: "10px 16px",
+                                fontSize: "13px",
+                                fontWeight: 800,
+                                cursor: !hasPendingFilters || filterLoading ? "not-allowed" : "pointer",
+                                boxShadow: !hasPendingFilters || filterLoading ? "none" : "0 4px 12px rgba(23, 26, 43, 0.12)",
+                              }}
+                            >
+                              {filterLoading ? "Applying…" : "Apply filters"}
+                            </button>
+                          </div>
+                        </div>
+                      </aside>
+                    </div>
+                  )}
 
                   <div className="results-list-column">
-                    {filteredResults.length ? (
+                    {resultCount ? (
                       <div className="candidate-list">
-                  {filteredResults.map(
+                  {(data?.results ?? []).map(
                     (candidate) => {
                       const shownProofs = new Set<string>();
                       const displayedRequirements = groupMatchedRequirements(
@@ -1476,6 +2283,27 @@ function App() {
                                     " · "}
                                   {candidate.total_experience_months !== undefined &&
                                     `${formatMonths(candidate.total_experience_months)} experience`}
+                                </div>
+                              )}
+
+                              {candidate.matched_experience && (
+                                <div className="candidate-email">
+                                  <strong>Matched experience:</strong>{" "}
+                                  {candidate.matched_experience.role || "Relevant experience"}
+                                  {candidate.matched_experience.company &&
+                                    ` · ${candidate.matched_experience.company}`}
+                                  {(candidate.matched_experience.start_date ||
+                                    candidate.matched_experience.end_date ||
+                                    candidate.matched_experience.is_current) && (
+                                    <>
+                                      {" · "}
+                                      {formatTimelineDate(candidate.matched_experience.start_date)}
+                                      {" – "}
+                                      {candidate.matched_experience.is_current
+                                        ? "Present"
+                                        : formatTimelineDate(candidate.matched_experience.end_date)}
+                                    </>
+                                  )}
                                 </div>
                               )}
 
@@ -1582,30 +2410,12 @@ function App() {
                       </div>
                     ) : (
                       <div className="filter-empty-state">
-                        <strong>No candidates match these filters</strong>
-                        <p>Try removing a selection or clear the filters to see all {resultCount} returned candidates.</p>
+                        <strong>No candidates found</strong>
+                        <p>Try changing the search or adjusting the applied filters.</p>
                       </div>
                     )}
                   </div>
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <div className="empty-icon">
-                    ⌕
-                  </div>
-
-                  <h3>
-                    No candidates found
-                  </h3>
-
-                  <p>
-                    {requirements?.relevant_experience_min_years &&
-                    data.parsed.semantic_requirement
-                      ? `No candidates had at least ${requirements.relevant_experience_min_years} years of dated experience supporting “${data.parsed.semantic_requirement}”. Try lowering the relevant-experience requirement or broadening the activity.`
-                      : "Try changing your search criteria or using broader requirements."}
-                  </p>
-                </div>
-              )}
+              </>
             </section>
           )}
       </main>
@@ -1648,27 +2458,26 @@ function App() {
               ))}
             </nav>
             <div className="profile-content">
-              {profileTab === "overview" && (
-                <>
-                  <section className="profile-section">
-                    <h3>Contact</h3>
-                    {selectedProfile.email && <p><span>Email</span><a href={`mailto:${selectedProfile.email}`}>{selectedProfile.email}</a></p>}
-                    {selectedProfile.phone && <p><span>Phone</span><a href={`tel:${selectedProfile.phone}`}>{selectedProfile.phone}</a></p>}
-                    {!selectedProfile.email && !selectedProfile.phone && <p className="profile-muted">No contact details available.</p>}
-                  </section>
-                  {selectedProfile.summary && <section className="profile-section"><h3>Summary</h3><p className="profile-summary">{selectedProfile.summary}</p></section>}
-                  <section className="profile-section">
-                    <h3>Search match</h3>
-                    {selectedProfile.matched_requirements.filter((item) => item.matched).map((item, index) => (
-                      <div className="profile-match" key={`${item.requirement}-${index}`}>
-                        <span>{item.requirement}</span>
-                        <p>{item.evidence?.find((proof) => proof.text)?.text ?? item.candidate_value ?? "Matched candidate profile"}</p>
-                      </div>
-                    ))}
-                  </section>
-                </>
-              )}
-              {profileTab === "experience" && (
+              <div className="profile-tab-panel" data-tab="overview" hidden={profileTab !== "overview"}>
+                <section className="profile-section">
+                  <h3>Contact</h3>
+                  {selectedProfile.email && <p><span>Email</span><a href={`mailto:${selectedProfile.email}`}>{selectedProfile.email}</a></p>}
+                  {selectedProfile.phone && <p><span>Phone</span><a href={`tel:${selectedProfile.phone}`}>{selectedProfile.phone}</a></p>}
+                  {!selectedProfile.email && !selectedProfile.phone && <p className="profile-muted">No contact details available.</p>}
+                </section>
+                {selectedProfile.summary && <section className="profile-section"><h3>Summary</h3><p className="profile-summary">{selectedProfile.summary}</p></section>}
+                <section className="profile-section">
+                  <h3>Search match</h3>
+                  {selectedProfile.matched_requirements.filter((item) => item.matched).map((item, index) => (
+                    <div className="profile-match" key={`${item.requirement}-${index}`}>
+                      <span>{item.requirement}</span>
+                      <p>{item.evidence?.find((proof) => proof.text)?.text ?? item.candidate_value ?? "Matched candidate profile"}</p>
+                    </div>
+                  ))}
+                </section>
+              </div>
+
+              <div className="profile-tab-panel" data-tab="experience" hidden={profileTab !== "experience"}>
                 <section className="profile-section">
                   <h3>Experience{selectedProfile.total_experience_months !== undefined ? ` · ${formatMonths(selectedProfile.total_experience_months)} total` : ""}</h3>
                   {selectedProfile.experience_timeline.length ? selectedProfile.experience_timeline.map((item, index) => (
@@ -1680,8 +2489,9 @@ function App() {
                     </article>
                   )) : <p className="profile-muted">No experience history available.</p>}
                 </section>
-              )}
-              {profileTab === "projects" && (
+              </div>
+
+              <div className="profile-tab-panel" data-tab="projects" hidden={profileTab !== "projects"}>
                 <section className="profile-section">
                   <h3>Projects</h3>
                   {selectedProfile.projects.length ? selectedProfile.projects.map((project, index) => (
@@ -1693,8 +2503,9 @@ function App() {
                     </article>
                   )) : <p className="profile-muted">No project details available.</p>}
                 </section>
-              )}
-              {profileTab === "education" && (
+              </div>
+
+              <div className="profile-tab-panel" data-tab="education" hidden={profileTab !== "education"}>
                 <section className="profile-section">
                   <h3>Education</h3>
                   {selectedProfile.education.length ? selectedProfile.education.map((item, index) => (
@@ -1705,13 +2516,14 @@ function App() {
                     </article>
                   )) : <p className="profile-muted">No education history available.</p>}
                 </section>
-              )}
-              {profileTab === "skills" && (
+              </div>
+
+              <div className="profile-tab-panel" data-tab="skills" hidden={profileTab !== "skills"}>
                 <section className="profile-section">
                   <h3>Skills</h3>
                   {selectedProfile.profile_skills.length ? <div className="profile-skill-list">{selectedProfile.profile_skills.map((skill) => <span key={skill}>{skill}</span>)}</div> : <p className="profile-muted">No skills available.</p>}
                 </section>
-              )}
+              </div>
             </div>
           </aside>
         </div>

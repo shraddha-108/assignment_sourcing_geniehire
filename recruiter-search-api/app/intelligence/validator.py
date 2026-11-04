@@ -257,6 +257,90 @@ def _experience_source_label(experience: Experience) -> str:
     return f"{position} ({start} - {end})"
 
 
+def _matched_experience_payload(experience: Experience) -> dict:
+    """Return a JSON-safe representation of a matched Experience record."""
+    return {
+        "experience_id": experience.id,
+        "role": experience.role.title if experience.role else None,
+        "company": experience.company.name if experience.company else None,
+        "start_date": (
+            experience.start_date.isoformat()
+            if experience.start_date
+            else None
+        ),
+        "end_date": (
+            experience.end_date.isoformat()
+            if experience.end_date
+            else None
+        ),
+        "is_current": bool(experience.is_current),
+        "duration_months": _experience_duration_months(experience),
+    }
+
+
+def _select_best_matching_experience(
+    requested_role: str,
+    experiences: list[Experience],
+) -> Experience | None:
+    """Select the best Experience record that satisfies a requested role.
+
+    Priority:
+    1. Exact normalized role match.
+    2. Canonical role-alias match.
+    3. Current experience.
+    4. Most recent start date.
+    5. Stable experience id as the final tie-breaker.
+
+    This keeps the search result tied to the actual Experience record rather
+    than the candidate headline or summary.
+    """
+    requested_normalized = _normalize_role_for_match(requested_role)
+    if not requested_normalized:
+        return None
+
+    alias_normalized = {
+        _normalize_role_for_match(alias)
+        for alias in equivalent_terms(requested_role, "role")
+    }
+
+    candidates = []
+    for experience in experiences:
+        if not experience.role or not experience.role.title:
+            continue
+        actual_normalized = _normalize_role_for_match(experience.role.title)
+        if not actual_normalized:
+            continue
+
+        if actual_normalized == requested_normalized:
+            match_strength = 2
+        elif actual_normalized in alias_normalized:
+            match_strength = 1
+        elif _role_matches(requested_role, experience.role.title):
+            # Use the shared role-family matcher for generic roles such as
+            # "developer" matching "Python Backend Developer".
+            match_strength = 1
+        else:
+            continue
+
+        start_date = experience.start_date or date.min
+        candidates.append((
+            match_strength,
+            1 if experience.is_current else 0,
+            start_date,
+            experience.id or 0,
+            experience,
+        ))
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda item: (item[0], item[1], item[2], item[3]),
+        reverse=True,
+    )
+    return candidates[0][-1]
+
+
 def _is_ml_project_requirement(requirement: str) -> bool:
     tokens = _tokens(requirement)
     asks_about_ml = (
@@ -472,6 +556,106 @@ def _semantic_support_score(
     return base_score * source_weight
 
 
+
+_NEGATIVE_TECH_WORK_ACTIONS = _BUILD_ACTIONS | {
+    "work", "worked", "working", "use", "used", "using",
+    "apply", "applied", "deploy", "deployed", "maintain", "maintained",
+    "develop", "developed", "implement", "implemented", "write", "wrote",
+    "program", "programmed", "code", "coded", "test", "tested",
+    "debug", "debugged", "integrate", "integrated", "automate", "automated",
+    "manage", "managed", "build", "built",
+}
+
+_NEGATIVE_TECH_PROFESSIONAL_CONTEXT = {
+    "developer", "developers", "engineer", "engineers", "programmer",
+    "programmers", "software", "backend", "frontend", "fullstack",
+    "full-stack", "application", "applications", "system", "systems",
+    "service", "services", "api", "apis", "project", "projects",
+    "platform", "platforms", "production", "professional",
+}
+
+def _technology_terms(requirement: str) -> set[str]:
+    """Return meaningful technology tokens from a negative requirement."""
+    return {
+        token
+        for token in _tokens(requirement)
+        if token not in _SEMANTIC_STOP_WORDS
+        and token not in {"not", "without", "exclude", "excluding", "avoid"}
+    }
+
+
+def _supports_negative_technology_evidence(
+    requirement: str,
+    evidence_text: str,
+    evidence_type: str | None = None,
+) -> str | None:
+    """
+    Find evidence that an excluded technology was actually used for meaningful
+    work. A bare skill-list mention is intentionally not treated as work
+    evidence, and incidental statements such as "interested in Python" do not
+    exclude the candidate.
+    """
+    technology_terms = _technology_terms(requirement)
+    if not technology_terms:
+        return None
+
+    source_type = (evidence_type or "").casefold()
+    if source_type in {"skill", "skills", "education"}:
+        return None
+
+    for sentence in _semantic_sentences(evidence_text):
+        tokens = _tokens(sentence)
+        if not technology_terms.intersection(tokens):
+            continue
+
+        has_work_action = bool(tokens & _NEGATIVE_TECH_WORK_ACTIONS)
+        has_professional_context = bool(
+            tokens & _NEGATIVE_TECH_PROFESSIONAL_CONTEXT
+        )
+
+        if source_type in {"project", "experience"}:
+            if has_work_action or has_professional_context:
+                return sentence
+            continue
+
+        if source_type == "summary":
+            if has_work_action or (
+                has_professional_context
+                and len(technology_terms.intersection(tokens)) > 0
+            ):
+                return sentence
+            continue
+
+        if has_work_action and has_professional_context:
+            return sentence
+
+    return None
+
+
+def _candidate_has_structured_skill(
+    db: Session,
+    candidate_id: int,
+    requirement: str,
+) -> bool:
+    """Return True when the excluded technology is only present as a listed skill."""
+    candidate_skill_rows = db.scalars(
+        select(CandidateSkill)
+        .where(CandidateSkill.candidate_id == candidate_id)
+    ).all()
+
+    aliases = equivalent_terms(requirement, "skill") or [requirement]
+    alias_keys = {_normalize(alias) for alias in aliases}
+
+    for row in candidate_skill_rows:
+        if not row.skill:
+            continue
+        skill_name = _normalize(row.skill.normalized_name)
+        if skill_name in alias_keys:
+            return True
+
+    return False
+
+
 def _supports_semantic_requirement(
     requirement: str,
     evidence_text: str,
@@ -616,24 +800,70 @@ def _is_cloud_technology_requirement(requirement: str) -> bool:
     ))
 
 
+_ROLE_LEVEL_PREFIXES = {
+    "junior", "jr", "senior", "sr", "lead", "principal",
+    "staff", "associate", "assistant", "chief", "head",
+}
+
+_ROLE_LEVEL_SUFFIXES = {
+    "i", "ii", "iii", "iv", "v", "1", "2", "3", "4", "5",
+}
+
+
+def _normalize_role_for_match(value: str | None) -> str:
+    tokens = list(_tokens(value))
+    if not tokens:
+        return ""
+
+    # _tokens() returns a set, so rebuild from the normalized text to preserve
+    # role-word order. Seniority/level markers are modifiers, not the role
+    # family itself.
+    ordered = re.findall(r"[a-z0-9+#.]+", (value or "").casefold())
+    while ordered and ordered[0] in _ROLE_LEVEL_PREFIXES:
+        ordered.pop(0)
+    while ordered and ordered[-1] in _ROLE_LEVEL_SUFFIXES:
+        ordered.pop()
+    return " ".join(ordered)
+
+
 def _role_matches(
     requested_role: str,
     actual_role: str | None,
 ) -> bool:
+    """Match role families without treating arbitrary token overlap as a role match."""
+    requested_normalized = _normalize_role_for_match(requested_role)
+    actual_normalized = _normalize_role_for_match(actual_role)
 
-    requested = _tokens(
-        requested_role
-    )
+    if not requested_normalized or not actual_normalized:
+        return False
 
-    actual = _tokens(
-        actual_role
-    )
+    # Exact normalized role remains the primary rule.
+    if requested_normalized == actual_normalized:
+        return True
 
-    return bool(requested and actual and (
-        requested.issubset(actual)
-        or any(_tokens(alias).issubset(actual)
-            for alias in equivalent_terms(requested_role, "role"))
-    ))
+    # A generic developer search should include specific developer roles,
+    # such as Backend Developer and Full Stack Developer, but not QA/testing
+    # or automation-focused roles.
+    if requested_normalized == "developer":
+        actual_tokens = set(_tokens(actual_normalized))
+        excluded_domains = {
+            "qa",
+            "quality",
+            "test",
+            "testing",
+            "automation",
+        }
+        if actual_tokens & excluded_domains:
+            return False
+        return "developer" in actual_tokens
+
+    # Canonical role aliases remain exact role-family matches after
+    # seniority/level modifiers are removed.
+    for alias in equivalent_terms(requested_role, "role"):
+        if _normalize_role_for_match(alias) == actual_normalized:
+            return True
+
+    return False
 
 
 def _company_matches(
@@ -736,19 +966,25 @@ def validate_structured_requirements(
         requirement: str,
         candidate_value,
         supporting: list[dict] | None = None,
+        matched_experience: Experience | None = None,
     ) -> None:
         supporting = supporting or []
         supporting = [
             {**item, "requirement": requirement}
             for item in supporting
         ]
-        matched.append({
+        match = {
             "type": requirement_type,
             "requirement": requirement,
             "matched": True,
             "candidate_value": candidate_value,
             "evidence": supporting,
-        })
+        }
+        if matched_experience is not None:
+            match["matched_experience"] = _matched_experience_payload(
+                matched_experience
+            )
+        matched.append(match)
         matched_evidence.extend(supporting)
 
     requested_location = requirements.get("location")
@@ -815,34 +1051,10 @@ def validate_structured_requirements(
             else:
                 skill_evidence = []
                 if requested_roles:
-                    qualifying_experiences = [
-                        experience
-                        for experience in role_experiences
-                        if experience.role
-                        and experience.role.title
-                        and any(
-                            _role_matches(role, experience.role.title)
-                            for role in requested_roles
-                        )
-                        and any(_tokens(alias).issubset(_tokens(experience.description))
-                            for alias in alias_terms if _tokens(alias))
-                    ]
-                    if not qualifying_experiences:
-                        failures.append({
-                            "type": "SKILL_EVIDENCE",
-                            "required": skill,
-                            "reason": f"No matching {', '.join(requested_roles)} experience describes using {skill}.",
-                        })
-                        continue
-                    skill_evidence = [{
-                        "candidate_id": candidate_id,
-                        "evidence_type": "experience",
-                        "source_id": experience.id,
-                        "source_kind": "experience_record",
-                        "experience_id": experience.id,
-                        "text": experience.description,
-                        "retrieval_score": 0.0,
-                    } for experience in qualifying_experiences[:2]]
+                    # Skills and roles are independent structured requirements.
+                    # The role requirement is validated separately below; do not
+                    # require the skill to appear in that experience description.
+                    skill_evidence = []
                 if not requested_roles and skill_row.evidence:
                     skill_evidence.append({
                         "candidate_id": candidate_id,
@@ -943,11 +1155,9 @@ def validate_structured_requirements(
 
     if requested_roles:
         for role in requested_roles:
-            matched_experience = next(
-                (experience for experience in role_experiences
-                 if experience.role and experience.role.title
-                 and _role_matches(role, experience.role.title)),
-                None,
+            matched_experience = _select_best_matching_experience(
+                role,
+                role_experiences,
             )
             if not matched_experience:
                 failures.append(
@@ -971,7 +1181,11 @@ def validate_structured_requirements(
                     "retrieval_score": 0.0,
                 }] if matched_experience.description else [])
                 add_match(
-                    "role", role, matched_experience.role.title, role_evidence
+                    "role",
+                    role,
+                    matched_experience.role.title,
+                    role_evidence,
+                    matched_experience=matched_experience,
                 )
 
     # --------------------------------------------------
@@ -1024,8 +1238,11 @@ def validate_structured_requirements(
                     "retrieval_score": 0.0,
                 }] if matched_company.description else [])
                 add_match(
-                    "company", company, matched_company.company.name,
+                    "company",
+                    company,
+                    matched_company.company.name,
                     company_evidence,
+                    matched_experience=matched_company,
                 )
 
     return (
@@ -1364,7 +1581,12 @@ def validate_candidate(
             }
         ):
             continue
+
+        # Negative technology requirements are handled by the evidence-aware
+        # block below. A listed skill is not, by itself, a hard exclusion.
         field = (requirement.field or "").casefold()
+        if field in {"skill", "skills"}:
+            continue
         value = requirement.value
         if field in {"skill", "skills"} and isinstance(value, str):
             requirement_filter = {"skills": [value]}
@@ -1617,41 +1839,113 @@ def validate_candidate(
         for item in alternatives
         if item.negated
     }
+
+    # Negative technology requirements are evidence-aware.
+    #
+    # Examples:
+    #   "not Python"
+    #       - Python nowhere relevant -> MATCH
+    #       - Python only in CandidateSkill -> PARTIAL_MATCH
+    #       - Python used in project/experience/meaningful summary -> EXCLUDE
+    #
+    # This must not be implemented as a simple SQL skill exclusion because a
+    # listed skill alone is weaker evidence than actual work performed.
+    negative_semantic_partial_ids = set()
+
     for requirement in requirements_graph:
+        field = (requirement.field or "").casefold()
+        is_negative_technology = field in {"skill", "skills"}
+
         if (
             not requirement.mandatory
             or not requirement.negated
             or requirement.id in grouped_negated_ids
-            or "semantic_evidence_retrieval" not in requirement.capabilities
+            or (
+                "semantic_evidence_retrieval" not in requirement.capabilities
+                and not is_negative_technology
+            )
         ):
             continue
+
         text = (
             requirement.value
             if isinstance(requirement.value, str)
             else requirement.normalized_text
         )
-        excluded, _, _, _ = validate_semantic_requirements(
-            candidate_id=candidate_id,
-            semantic_requirements=[text],
-            evidence=evidence,
-        )
-        matched = not excluded
-        matched_requirements.append({
-            "type": "semantic",
-            "requirement_id": requirement.id,
-            "requirement": requirement.original_text,
-            "matched": matched,
-            "negated": True,
-            "mandatory": True,
-            "evidence": [],
-        })
-        if excluded:
+
+        negative_work_evidence = None
+        negative_work_support_score = 0.0
+
+        for evidence_item in evidence:
+            matched_sentence = _supports_negative_technology_evidence(
+                requirement=text,
+                evidence_text=str(evidence_item.get("text") or ""),
+                evidence_type=evidence_item.get("evidence_type"),
+            )
+            if not matched_sentence:
+                continue
+
+            support_score = _semantic_support_score(
+                requirement=text,
+                sentence=matched_sentence,
+                evidence_type=evidence_item.get("evidence_type"),
+            )
+            if (
+                negative_work_evidence is None
+                or support_score > negative_work_support_score
+            ):
+                negative_work_evidence = {
+                    **evidence_item,
+                    "requirement": text,
+                    "text": matched_sentence,
+                    "semantic_support_score": support_score,
+                }
+                negative_work_support_score = support_score
+
+        if negative_work_evidence is not None:
+            matched = False
+            matched_requirements.append({
+                "type": "semantic",
+                "requirement_id": requirement.id,
+                "requirement": requirement.original_text,
+                "matched": matched,
+                "negated": True,
+                "mandatory": True,
+                "evidence": [negative_work_evidence],
+            })
             semantic_failures.append({
                 "type": "SEMANTIC_NOT",
                 "requirement_id": requirement.id,
                 "required": requirement.original_text,
-                "reason": "Resume evidence matched an explicitly excluded requirement",
+                "reason": (
+                    "Excluded technology was found in meaningful project, "
+                    "experience, or work-related summary evidence"
+                ),
+                "evidence": [negative_work_evidence],
             })
+            continue
+
+        # If the only evidence is a structured/listed skill, keep the
+        # candidate eligible but mark the negative requirement as partial.
+        # The final ranking layer can then place these below clean matches.
+        skill_only = _candidate_has_structured_skill(
+            db=db,
+            candidate_id=candidate_id,
+            requirement=text,
+        )
+        if skill_only:
+            negative_semantic_partial_ids.add(requirement.id)
+
+        matched_requirements.append({
+            "type": "semantic",
+            "requirement_id": requirement.id,
+            "requirement": requirement.original_text,
+            "matched": not skill_only,
+            "negated": True,
+            "mandatory": True,
+            "evidence": [],
+            "negative_skill_only": skill_only,
+        })
 
     semantic_valid = not semantic_failures
     for requirement in requirements_graph:
@@ -1881,16 +2175,39 @@ def validate_candidate(
             linked = [match for match in matched_requirements
                 if _normalize(str(match.get("requirement") or "")) == wanted]
         if not linked:
-            field = (requirement.field or "").casefold()
-            expected_type = {
-                "skill": "skill", "skills": "skill", "role": "role", "roles": "role",
-                "company": "company", "companies": "company", "location": "location",
-                "experience": "experience", "total_experience": "experience",
-                "min_experience_years": "experience", "max_experience_years": "experience",
-            }.get(field)
-            if expected_type:
-                linked = [match for match in matched_requirements
-                    if match.get("type") == expected_type]
+            field = (requirement.field or "").casefold()    
+            # Runtime Geoapify location filters are already enforced
+            # by the retriever. Do not validate them again using the
+            # legacy scalar location matcher.
+            is_runtime_location = (
+                field == "location"
+                and str(requirement.id).startswith("runtime_filter_location_")
+                and bool(structured_requirements.get("location_filters"))
+            )   
+            if is_runtime_location:
+                linked = [{
+                    "type": "location",
+                    "requirement_id": requirement.id,
+                    "requirement": requirement.original_text,
+                    "matched": True,
+                    "evidence": [],
+                }]
+            else:
+                expected_type = {
+                    "skill": "skill", "skills": "skill",
+                    "role": "role", "roles": "role",
+                    "company": "company", "companies": "company",
+                    "location": "location",
+                    "experience": "experience",
+                    "total_experience": "experience",
+                    "min_experience_years": "experience",
+                    "max_experience_years": "experience",
+                }.get(field)    
+                if expected_type:
+                    linked = [
+                        match for match in matched_requirements
+                        if match.get("type") == expected_type
+                    ]
         matched = any(bool(match.get("matched")) for match in linked)
         if requirement.group_id and requirement.relationship.upper() == "OR":
             group_nodes = [node for node in requirements_graph
@@ -1899,7 +2216,10 @@ def validate_candidate(
                 if match.get("requirement_id") == node.id]
             matched = any(bool(match.get("matched")) for match in group_matches)
         match_mode = requirement.match_mode or ("HARD" if requirement.mandatory else "SOFT")
-        status = "MATCH" if matched else ("NO_MATCH" if match_mode == "HARD" else "PARTIAL_MATCH")
+        if requirement.id in negative_semantic_partial_ids:
+            status = "PARTIAL_MATCH"
+        else:
+            status = "MATCH" if matched else ("NO_MATCH" if match_mode == "HARD" else "PARTIAL_MATCH")
         requirement_statuses.append({
             "requirement_id": requirement.id,
             "requirement": requirement.original_text,
@@ -1913,7 +2233,7 @@ def validate_candidate(
             match.setdefault("requirement_id", requirement.id)
 
     partial_match = any(
-        status["match_mode"] == "SOFT" and status["status"] == "PARTIAL_MATCH"
+        status["status"] == "PARTIAL_MATCH"
         for status in requirement_statuses
     )
     match_status = "NO_MATCH" if not (

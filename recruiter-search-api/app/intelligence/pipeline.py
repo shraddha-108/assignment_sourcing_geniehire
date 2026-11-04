@@ -167,6 +167,12 @@ def _structured_or_groups(requirements: list) -> list[list]:
 
 
 def _structured_filter_for_requirement(requirement) -> dict:
+    # Runtime Geoapify locations are already represented by the structured
+    # location_filters list. Do not turn them into scalar location branches.
+    # The retriever applies the selected locations with OR semantics.
+    if str(getattr(requirement, "id", "")).startswith("runtime_filter_location_"):
+        return {}
+
     field = (requirement.field or "").casefold()
     value = requirement.value
     if field in {"skill", "skills"} and isinstance(value, str):
@@ -524,6 +530,15 @@ def _build_explanation(matched_requirements: list[dict]) -> list[str]:
     return explanations
 
 
+def _extract_matched_experience(matched_requirements: list[dict]) -> dict | None:
+    """Return the Experience record selected by validation for the search match."""
+    for match in matched_requirements:
+        matched_experience = match.get("matched_experience")
+        if matched_experience:
+            return matched_experience
+    return None
+
+
 def _build_experience_timeline(candidate: Candidate) -> list[dict]:
     entries = []
     for experience in candidate.experiences or []:
@@ -601,8 +616,12 @@ def execute_search(
     semantic_requirements = list(routing_packet.semantic_requirements)
     hard_semantic_requirements = semantic_requirements
     if requirements:
+        runtime_location_filters = list(
+            (routing_packet.structured_requirements or {}).get("location_filters") or []
+        )
         structured_requirements = {
             "skills": [], "roles": [], "companies": [], "location": None,
+            "location_filters": runtime_location_filters,
             "min_experience_years": None, "max_experience_years": None,
             "min_experience_exclusive": False, "skill_aliases": {},
         }
@@ -630,7 +649,14 @@ def execute_search(
                             if aliases:
                                 structured_requirements["skill_aliases"][canonical] = aliases
                 elif field == "location" and value:
-                    structured_requirements["location"] = str(value)
+                    # Geoapify selections are carried separately as structured
+                    # city/state/country objects in location_filters. Keeping
+                    # their display string here would invoke the legacy scalar
+                    # location matcher as well and can reject valid candidates.
+                    if not str(getattr(requirement, "id", "")).startswith(
+                        "runtime_filter_location_"
+                    ):
+                        structured_requirements["location"] = str(value)
                 elif field == "experience" and isinstance(value, dict):
                     structured_requirements["min_experience_years"] = value.get("min_experience_years")
                     structured_requirements["max_experience_years"] = value.get("max_experience_years")
@@ -1336,6 +1362,7 @@ def execute_search(
 
         validation = item.get("validation", {})
         matched_requirements = validation.get("matched_requirements", [])
+        matched_experience = _extract_matched_experience(matched_requirements)
         explanation = _build_explanation(matched_requirements)
 
         matched_skills = []
@@ -1380,6 +1407,7 @@ def execute_search(
                 "email": candidate.email,
                 "phone": candidate.phone,
                 "headline": candidate.headline,
+                "matched_experience": matched_experience,
                 "location": format_candidate_location(candidate.location),
                 "summary": candidate.summary,
                 "linkedin_url": candidate.linkedin_url,
