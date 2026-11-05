@@ -1,7 +1,10 @@
 import unittest
 from unittest.mock import patch
 
-from app.intelligence.pipeline import _mixed_structured_or_branches
+from app.intelligence.pipeline import (
+    _mixed_structured_or_branches,
+    _structured_or_groups,
+)
 from app.search.normalization import apply_explicit_boolean_operators
 from app.search.schema import ParsedQuery
 from app.search.service import (
@@ -55,6 +58,10 @@ class ExplicitBooleanOperatorTests(unittest.TestCase):
     def test_and_remains_a_conjunction(self):
         skill = skill_requirement()
         project = semantic_requirement()
+        skill.group_id = "parser_group"
+        skill.relationship = "OR"
+        project.group_id = "parser_group"
+        project.relationship = "OR"
 
         apply_explicit_boolean_operators(
             "Java and worked on machine learning projects",
@@ -65,6 +72,73 @@ class ExplicitBooleanOperatorTests(unittest.TestCase):
         self.assertIsNone(project.group_id)
         self.assertEqual(skill.relationship, "AND")
         self.assertEqual(project.relationship, "AND")
+
+    def test_role_alternatives_remain_conjunctive_without_explicit_or(self):
+        backend = SearchRequirement(
+            id="backend",
+            original_text="backend developer",
+            normalized_text="backend developer",
+            type="STRUCTURED",
+            capabilities=["structured_experience_lookup"],
+            field="roles",
+            value="backend developer",
+            group_id="roles",
+            relationship="OR",
+        )
+        frontend = SearchRequirement(
+            id="frontend",
+            original_text="frontend developer",
+            normalized_text="frontend developer",
+            type="STRUCTURED",
+            capabilities=["structured_experience_lookup"],
+            field="roles",
+            value="frontend developer",
+            group_id="roles",
+            relationship="OR",
+        )
+
+        apply_explicit_boolean_operators(
+            "backend developer and frontend developer",
+            [backend, frontend],
+        )
+
+        self.assertIsNone(backend.group_id)
+        self.assertIsNone(frontend.group_id)
+        self.assertEqual(backend.relationship, "AND")
+        self.assertEqual(frontend.relationship, "AND")
+
+    def test_explicit_role_or_is_preserved(self):
+        backend = SearchRequirement(
+            id="backend",
+            original_text="backend developer",
+            normalized_text="backend developer",
+            type="STRUCTURED",
+            capabilities=["structured_experience_lookup"],
+            field="roles",
+            value="backend developer",
+            group_id="roles",
+            relationship="OR",
+        )
+        frontend = SearchRequirement(
+            id="frontend",
+            original_text="frontend developer",
+            normalized_text="frontend developer",
+            type="STRUCTURED",
+            capabilities=["structured_experience_lookup"],
+            field="roles",
+            value="frontend developer",
+            group_id="roles",
+            relationship="OR",
+        )
+
+        apply_explicit_boolean_operators(
+            "backend developer or frontend developer",
+            [backend, frontend],
+        )
+
+        self.assertEqual(backend.group_id, frontend.group_id)
+        self.assertEqual(backend.relationship, "OR")
+        self.assertEqual(frontend.relationship, "OR")
 
     def test_not_marks_only_the_excluded_requirement(self):
         skill = skill_requirement()
@@ -124,6 +198,45 @@ class ExplicitBooleanOperatorTests(unittest.TestCase):
 
         self.assertEqual(len(branches), 1)
         self.assertIn("java", [value.casefold() for value in branches[0]["skills"]])
+
+    def test_role_or_retrieval_creates_one_branch_per_role(self):
+        backend = SearchRequirement(
+            id="backend",
+            original_text="backend developer",
+            normalized_text="backend developer",
+            type="STRUCTURED",
+            capabilities=["structured_experience_lookup"],
+            field="roles",
+            value="backend developer",
+            mandatory=True,
+            group_id="role_alternatives",
+            relationship="OR",
+        )
+        frontend = SearchRequirement(
+            id="frontend",
+            original_text="frontend developer",
+            normalized_text="frontend developer",
+            type="STRUCTURED",
+            capabilities=["structured_experience_lookup"],
+            field="roles",
+            value="frontend developer",
+            mandatory=True,
+            group_id="role_alternatives",
+            relationship="OR",
+        )
+
+        self.assertEqual(
+            _structured_or_groups([backend, frontend]),
+            [[backend, frontend]],
+        )
+        branches = _mixed_structured_or_branches(
+            [backend, frontend],
+            {"skills": [], "roles": ["backend developer", "frontend developer"], "companies": []},
+        )
+
+        self.assertEqual(len(branches), 2)
+        self.assertEqual(branches[0]["roles"], ["backend developer"])
+        self.assertEqual(branches[1]["roles"], ["frontend developer"])
 
     def test_parser_skill_that_swallowed_semantic_or_clause_is_repaired(self):
         query = "candidate who knows java or also worked on machine learning projects"

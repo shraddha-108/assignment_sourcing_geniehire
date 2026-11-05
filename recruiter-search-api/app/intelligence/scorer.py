@@ -1,3 +1,4 @@
+
 import math
 import re
 from datetime import date
@@ -58,7 +59,6 @@ def _evidence_quality(evidence: list[dict]) -> float:
 def _experience_fit(
     matched_requirements: list[dict],
 ) -> float | None:
-
     match = next(
         (
             item
@@ -153,11 +153,56 @@ def _experience_fit(
     return 0.65
 
 
+def _seniority_fit(
+    matched_requirements: list[dict],
+) -> float | None:
+    """
+    Rank candidates by how closely their experience fits
+    the requested seniority band.
+
+    Qualification is handled by validation.
+    This function only distinguishes preferred-band matches
+    from acceptable-band matches.
+    """
+
+    matches = [
+        item
+        for item in matched_requirements
+        if item.get("type") == "seniority"
+        and item.get("matched", True)
+    ]
+
+    if not matches:
+        return None
+
+    fit_scores = {
+        "PREFERRED": 1.0,
+        "ACCEPTABLE": 0.75,
+    }
+
+    scores = []
+
+    for item in matches:
+        fit = str(
+            item.get("seniority_fit") or ""
+        ).upper()
+
+        score = fit_scores.get(fit)
+
+        if score is not None:
+            scores.append(score)
+
+    return (
+        sum(scores) / len(scores)
+        if scores
+        else None
+    )
+
+
 def _skill_fit(
     candidate,
     matched_requirements: list[dict],
 ) -> float | None:
-
     requested = [
         item
         for item in matched_requirements
@@ -181,7 +226,6 @@ def _skill_fit(
     today = date.today()
 
     for requirement in requested:
-
         name = " ".join(
             str(
                 requirement.get("candidate_value")
@@ -291,7 +335,6 @@ def _skill_fit(
 def _role_fit(
     matched_requirements: list[dict],
 ) -> float | None:
-
     roles = [
         item
         for item in matched_requirements
@@ -305,7 +348,6 @@ def _role_fit(
     fits = []
 
     for item in roles:
-
         requested = set(
             str(
                 item.get("requirement") or ""
@@ -337,7 +379,6 @@ def _role_fit(
 def _requirement_fit(
     matched_requirements: list[dict],
 ) -> float | None:
-
     non_semantic = [
         item
         for item in matched_requirements
@@ -347,6 +388,7 @@ def _requirement_fit(
             "company",
             "location",
             "experience",
+            "seniority",
             "role",
             "temporal",
             "relational",
@@ -360,7 +402,6 @@ def _requirement_fit(
     ]
 
     if soft:
-
         groups: dict[
             str,
             list[dict],
@@ -369,7 +410,6 @@ def _requirement_fit(
         independent = []
 
         for item in soft:
-
             if (
                 item.get("group_id")
                 and str(
@@ -533,12 +573,15 @@ def score_candidate(
         matched
     )
 
+    seniority_fit = _seniority_fit(
+        matched
+    )
+
     requirement_fit = _requirement_fit(
         matched
     )
 
     if semantic_matches:
-
         components = [
             (
                 semantic_support,
@@ -560,6 +603,7 @@ def score_candidate(
                 role_fit,
                 skill_fit,
                 experience_fit,
+                seniority_fit,
                 requirement_fit,
             )
             if value is not None
@@ -575,11 +619,9 @@ def score_candidate(
             )
 
     else:
-
         components = []
 
         if item.get("semantic_match"):
-
             components.extend(
                 [
                     (
@@ -604,7 +646,11 @@ def score_candidate(
             ),
             (
                 experience_fit,
-                0.25,
+                0.15,
+            ),
+            (
+                seniority_fit,
+                0.10,
             ),
             (
                 evidence_fit,
@@ -690,11 +736,9 @@ def score_candidates(
     candidates: list[dict],
     structured_requirements: dict | None = None,
 ) -> list[dict]:
-
     scored = []
 
     for item in candidates:
-
         result = dict(item)
 
         result["score"] = score_candidate(

@@ -11,6 +11,52 @@ _ROLE_GROUPS = (
     ("software engineer", "sde", "software development engineer", "software developer"),
     ("machine learning engineer", "ml engineer", "machine-learning engineer"),
     ("react developer", "react dev", "react.js developer", "reactjs developer"),
+    (
+        "backend developer",
+        "back end developer",
+        "back-end developer",
+        "backend engineer",
+        "back end engineer",
+        "back-end engineer",
+        "backend software developer",
+        "back end software developer",
+        "back-end software developer",
+        "backend software engineer",
+        "back end software engineer",
+        "back-end software engineer",
+        "software developer backend",
+        "software engineer backend",
+        "server-side developer",
+        "server side developer",
+        "server-side engineer",
+        "server side engineer",
+    ),
+    (
+        "frontend developer",
+        "front end developer",
+        "front-end developer",
+        "frontend engineer",
+        "front end engineer",
+        "front-end engineer",
+        "frontend software developer",
+        "front end software developer",
+        "front-end software developer",
+        "frontend software engineer",
+        "front end software engineer",
+        "front-end software engineer",
+        "software developer frontend",
+        "software engineer frontend",
+    ),
+    (
+        "cloud developer",
+        "cloud software developer",
+        "cloud platform developer",
+        "cloud engineer",
+        "cloud software engineer",
+        "cloud platform engineer",
+        "software developer cloud",
+        "software engineer cloud",
+    ),
 )
 _SKILL_GROUPS = (
     ("javascript", "js"),
@@ -53,6 +99,12 @@ _SEMANTIC_CONCEPTS = {
         "server-side development", "backend languages and frameworks",
         "REST or GraphQL APIs", "databases", "microservices",
     ),
+    "customer relationship management": (
+        "CRM", "client relationship management", "account management",
+        "client relationships", "relationship manager", "account manager", "customer success",
+        "customer engagement", "customer retention", "Salesforce",
+        "HubSpot", "Microsoft Dynamics 365", "Zoho CRM",
+    ),
 }
 _FAMILY_QUERY_PATTERNS = {
     "microsoft ecosystem": r"\bmicrosoft\s+(?:technology|technologies|ecosystem|stack)\b",
@@ -72,6 +124,13 @@ _SEMANTIC_CONCEPT_PATTERNS = {
     "Microsoft ecosystem": _FAMILY_QUERY_PATTERNS["microsoft ecosystem"],
     "cloud technologies": _FAMILY_QUERY_PATTERNS["cloud technologies"],
     "backend technologies": _FAMILY_QUERY_PATTERNS["backend technologies"],
+    "customer relationship management": (
+        r"\b(?:customer|client)\s+relationship\s+management\b|"
+        r"\bCRM\b|\baccount\s+management\b|\brelationship\s+manager\b|"
+        r"\baccount\s+manager\b|\bclient\s+relationships?\b|"
+        r"\bcustomer\s+(?:success|engagement|retention)\b|"
+        r"\b(?:salesforce|hubspot|dynamics\s*365|zoho\s*crm)\b"
+    ),
 }
 _INDUSTRY_EVIDENCE_TERMS = {
     "it": (
@@ -187,6 +246,75 @@ def equivalent_terms(value: str, kind: str) -> list[str]:
         return []
     canonical = group[0]
     return list(dict.fromkeys([canonical, *group]))
+
+
+def company_name_matches(actual: str | None, equivalents: list[str]) -> bool:
+    """Match exact company aliases, including an acronym in a trailing parenthesis."""
+    if not actual:
+        return False
+
+    def normalize_company(value: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
+
+    actual_name = normalize_company(actual)
+    if any(normalize_company(alias) == actual_name for alias in equivalents if alias):
+        return True
+
+    without_parenthetical = re.sub(r"\s*\([^()]*\)\s*$", "", actual).strip()
+    return bool(
+        without_parenthetical
+        and normalize_company(without_parenthetical) != actual_name
+        and any(
+            normalize_company(alias) == normalize_company(without_parenthetical)
+            for alias in equivalents if alias
+        )
+    )
+
+
+_ROLE_LEVEL_MODIFIERS = {
+    "senior", "sr", "junior", "jr", "lead", "principal", "staff",
+    "associate", "trainee", "i", "ii", "iii", "iv", "v",
+    "1", "2", "3", "4", "5",
+}
+_ROLE_DOMAIN_EXCLUSIONS = {
+    "test", "testing", "qa", "quality", "assurance", "automation",
+}
+
+
+def role_matches(requested_role: str, actual_role: str | None) -> bool:
+    """Match explicit role families and their controlled title equivalents."""
+    requested_tokens = re.findall(r"[a-z0-9+#.]+", (requested_role or "").casefold())
+    actual_tokens = re.findall(r"[a-z0-9+#.]+", (actual_role or "").casefold())
+    if not requested_tokens or not actual_tokens:
+        return False
+
+    actual_token_set = set(actual_tokens)
+    if requested_tokens == ["developer"]:
+        return (
+            "developer" in actual_token_set
+            and not actual_token_set & _ROLE_DOMAIN_EXCLUSIONS
+        )
+
+    aliases = equivalent_terms(requested_role, "role") or [requested_role]
+    for alias in aliases:
+        alias_tokens = re.findall(r"[a-z0-9+#.]+", alias.casefold())
+        if not alias_tokens:
+            continue
+        width = len(alias_tokens)
+        if not any(
+            actual_tokens[index:index + width] == alias_tokens
+            for index in range(len(actual_tokens) - width + 1)
+        ):
+            continue
+
+        extra_tokens = actual_token_set - set(alias_tokens)
+        if (
+            not extra_tokens & _ROLE_DOMAIN_EXCLUSIONS
+            and extra_tokens <= _ROLE_LEVEL_MODIFIERS
+        ):
+            return True
+
+    return False
 
 
 def canonical_term(value: str, kind: str) -> str:
@@ -387,6 +515,13 @@ def normalize_explicit_semantic_or(query: str, requirements: list, semantic_requ
 
 def apply_explicit_boolean_operators(query: str, requirements: list) -> None:
     """Apply explicit OR and NOT connectors between parsed requirement spans."""
+    for requirement in requirements:
+        group_id = str(requirement.group_id or "")
+        if group_id and not group_id.startswith("explicit_or_"):
+            requirement.group_id = None
+            if requirement.relationship.upper() == "OR":
+                requirement.relationship = "AND"
+
     mentions = []
     for requirement in requirements:
         probes = [

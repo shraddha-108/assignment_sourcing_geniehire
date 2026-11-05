@@ -46,8 +46,12 @@ from app.intelligence.retriever import (
 from app.intelligence.scorer import (
     score_candidates,
 )
+from app.intelligence.seniority_policy import get_seniority_policy
 
 from app.intelligence.validator import (
+    customer_relationship_partial_evidence,
+    customer_relationship_partial_reason,
+    is_customer_relationship_requirement,
     validate_candidate,
 )
 
@@ -57,6 +61,168 @@ logger = logging.getLogger(__name__)
 
 def _normalize(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
+
+
+def _merge_experience_bounds(
+    requirements: dict,
+    minimum: float | None,
+    maximum: float | None,
+    minimum_exclusive: bool = False,
+) -> None:
+    current_minimum = requirements.get("min_experience_years")
+    current_maximum = requirements.get("max_experience_years")
+    if minimum is not None:
+        if current_minimum is None or minimum > current_minimum:
+            requirements["min_experience_years"] = minimum
+            requirements["min_experience_exclusive"] = minimum_exclusive
+        elif minimum == current_minimum:
+            requirements["min_experience_exclusive"] = bool(
+                requirements.get("min_experience_exclusive")
+            ) or minimum_exclusive
+    if maximum is not None:
+        requirements["max_experience_years"] = (
+            maximum if current_maximum is None else min(current_maximum, maximum)
+        )
+
+def _allow_relevant_duration_partial_match(
+    validation: dict,
+    total_experience_months: int | None,
+    requirements: list,
+) -> bool:
+    """Keep evidenced candidates reviewable when activity tenure is undated."""
+    failures = validation.get("failures") or []
+    if not failures or any(
+        failure.get("type") != "EXPERIENCE_SCOPE"
+        for failure in failures
+    ):
+        return False
+
+    scoped_requirements = [
+        requirement
+        for requirement in requirements
+        if requirement.minimum_relevant_experience_months is not None
+    ]
+    if not scoped_requirements or total_experience_months is None:
+        return False
+
+    scoped_ids = {requirement.id for requirement in scoped_requirements}
+    if any(failure.get("requirement_id") not in scoped_ids for failure in failures):
+        return False
+
+    required_months = max(
+        requirement.minimum_relevant_experience_months
+        for requirement in scoped_requirements
+    )
+    if total_experience_months < required_months:
+        return False
+
+    supported_requirement_ids = {
+        match.get("requirement_id")
+        for match in validation.get("matched_requirements", [])
+        if match.get("type") == "semantic"
+        and match.get("matched")
+        and match.get("evidence")
+    }
+    if not scoped_ids.issubset(supported_requirement_ids):
+        return False
+
+    for match in validation.get("matched_requirements", []):
+        if (
+            match.get("type") == "relevant_experience"
+            and match.get("requirement_id") in scoped_ids
+            and not match.get("matched")
+        ):
+            match["status"] = "PARTIAL_MATCH"
+
+    validation["valid"] = True
+    validation["match_status"] = "PARTIAL_MATCH"
+    return True
+
+
+def _allow_customer_relationship_partial_match(
+    validation: dict,
+    evidence: list[dict],
+    requirements: list,
+) -> bool:
+    """Keep adjacent Dynamics evidence reviewable without calling it a CRM match."""
+    failures = validation.get("failures") or []
+    if not failures or any(
+        failure.get("type") != "SEMANTIC"
+        for failure in failures
+    ):
+        return False
+
+    partial_matches = []
+    for failure in failures:
+        required = failure.get("required")
+        if not isinstance(required, str):
+            return False
+        requirement = next(
+            (
+                item for item in requirements
+                if _normalize(str(item.value or item.original_text))
+                == _normalize(required)
+                and "semantic_evidence_retrieval" in item.capabilities
+            ),
+            None,
+        )
+        if requirement is None or not is_customer_relationship_requirement(required):
+            return False
+
+        related_evidence = next(
+            (
+                item for item in evidence
+                if customer_relationship_partial_evidence(
+                    required,
+                    str(item.get("text") or ""),
+                    item.get("evidence_type"),
+                )
+            ),
+            None,
+        )
+        if related_evidence is None:
+            return False
+        partial_matches.append((requirement, related_evidence))
+
+    for requirement, item in partial_matches:
+        text = customer_relationship_partial_evidence(
+            str(requirement.value or requirement.original_text),
+            str(item.get("text") or ""),
+            item.get("evidence_type"),
+        )
+        if not text:
+            continue
+        proof = {
+            **item,
+            "requirement": requirement.original_text,
+            "text": text,
+        }
+        for match in validation.get("matched_requirements", []):
+            if (
+                match.get("type") == "semantic"
+                and (
+                    match.get("requirement_id") == requirement.id
+                    or _normalize(str(match.get("requirement") or ""))
+                    == _normalize(requirement.original_text)
+                )
+            ):
+                match.update({
+                    "matched": False,
+                    "status": "PARTIAL_MATCH",
+                    "partial_reason": customer_relationship_partial_reason(text),
+                    "candidate_value": "Related CRM/Dynamics evidence; hands-on work unclear",
+                    "evidence": [proof],
+                })
+        for status in validation.get("requirement_statuses", []):
+            if status.get("requirement_id") == requirement.id:
+                status.update({
+                    "matched": False,
+                    "status": "PARTIAL_MATCH",
+                })
+
+    validation["valid"] = True
+    validation["match_status"] = "PARTIAL_MATCH"
+    return True
 
 
 def _semantic_debug_chunks(evidence: list[dict], limit: int = 20) -> list[dict]:
@@ -180,7 +346,10 @@ def _structured_filter_for_requirement(requirement) -> dict:
     if field in {"role", "roles"} and isinstance(value, str):
         return {"roles": [value]}
     if field in {"company", "companies"} and isinstance(value, str):
-        return {"companies": [value]}
+        return {
+            "companies": [value],
+            "company_aliases": {value: requirement.equivalent_terms or [value]},
+        }
     if field == "location" and isinstance(value, str):
         return {"location": value}
     if field in {"experience", "total_experience"} and isinstance(value, dict):
@@ -221,9 +390,16 @@ def _mixed_structured_or_branches(requirements: list, base_filter: dict) -> list
             "semantic_evidence_retrieval" in item.capabilities
             for item in members
         )
-        needs_branch = has_semantic_alternative or len(fields) > 1 or any(
-            field not in {"skills", "roles", "companies"}
-            for option in options for field, value in option.items() if value is not None
+        needs_branch = (
+            has_semantic_alternative
+            or len(fields) > 1
+            or len(options) > 1
+            or any(
+                field not in {"skills", "roles", "companies"}
+                for option in options
+                for field, value in option.items()
+                if value is not None
+            )
         )
         if structured_members and len(options) == len(structured_members) and needs_branch:
             mixed_groups.append((structured_members, options))
@@ -268,6 +444,12 @@ def _mixed_structured_or_branches(requirements: list, base_filter: dict) -> list
                     continue
                 if field in {"skills", "roles", "companies"}:
                     branch[field].extend(value)
+                elif field in {"min_experience_years", "max_experience_years"}:
+                    _merge_experience_bounds(
+                        branch,
+                        value if field == "min_experience_years" else None,
+                        value if field == "max_experience_years" else None,
+                    )
                 else:
                     branch[field] = value
         branches.append(branch)
@@ -616,14 +798,19 @@ def execute_search(
     semantic_requirements = list(routing_packet.semantic_requirements)
     hard_semantic_requirements = semantic_requirements
     if requirements:
+        base_structured_requirements = routing_packet.structured_requirements or {}
         runtime_location_filters = list(
-            (routing_packet.structured_requirements or {}).get("location_filters") or []
+            base_structured_requirements.get("location_filters") or []
         )
         structured_requirements = {
-            "skills": [], "roles": [], "companies": [], "location": None,
+            "skills": [], "roles": [], "companies": [], "domains": [], "location": None,
             "location_filters": runtime_location_filters,
-            "min_experience_years": None, "max_experience_years": None,
-            "min_experience_exclusive": False, "skill_aliases": {},
+            "min_experience_years": base_structured_requirements.get("min_experience_years"),
+            "max_experience_years": base_structured_requirements.get("max_experience_years"),
+            "min_experience_exclusive": base_structured_requirements.get("min_experience_exclusive", False),
+            "skill_aliases": {},
+            "company_aliases": {},
+            "seniority_filter": None,
         }
         graph_semantic = []
         hard_semantic_requirements = []
@@ -633,7 +820,7 @@ def execute_search(
                 "structured_candidate_lookup", "structured_experience_lookup"
             }:
                 field = requirement.field
-                if field in {"skill", "skills", "role", "roles", "company", "companies"} and value:
+                if field in {"skill", "skills", "role", "roles", "company", "companies", "domains"} and value:
                     target_field = {"skill": "skills", "role": "roles", "company": "companies"}.get(field, field)
                     values = value if isinstance(value, list) else [value]
                     for raw_value in values:
@@ -648,6 +835,9 @@ def execute_search(
                             aliases = requirement.equivalent_terms if isinstance(value, str) else equivalent_terms(canonical, "skill")
                             if aliases:
                                 structured_requirements["skill_aliases"][canonical] = aliases
+                        elif target_field == "companies":
+                            aliases = requirement.equivalent_terms or [canonical]
+                            structured_requirements["company_aliases"][canonical] = aliases
                 elif field == "location" and value:
                     # Geoapify selections are carried separately as structured
                     # city/state/country objects in location_filters. Keeping
@@ -658,14 +848,48 @@ def execute_search(
                     ):
                         structured_requirements["location"] = str(value)
                 elif field == "experience" and isinstance(value, dict):
-                    structured_requirements["min_experience_years"] = value.get("min_experience_years")
-                    structured_requirements["max_experience_years"] = value.get("max_experience_years")
-                    structured_requirements["min_experience_exclusive"] = requirement.min_experience_exclusive
+                    if not (
+                        requirement.group_id
+                        and requirement.relationship.upper() == "OR"
+                    ):
+                        _merge_experience_bounds(
+                            structured_requirements,
+                            value.get("min_experience_years"),
+                            value.get("max_experience_years"),
+                            requirement.min_experience_exclusive,
+                        )
                 elif field == "min_experience_years" and value is not None:
-                    structured_requirements["min_experience_years"] = value
-                    structured_requirements["min_experience_exclusive"] = requirement.min_experience_exclusive
+                    if not (
+                        requirement.group_id
+                        and requirement.relationship.upper() == "OR"
+                    ):
+                        _merge_experience_bounds(
+                            structured_requirements,
+                            value,
+                            None,
+                            requirement.min_experience_exclusive,
+                        )
                 elif field == "max_experience_years" and value is not None:
-                    structured_requirements["max_experience_years"] = value
+                    if not (
+                        requirement.group_id
+                        and requirement.relationship.upper() == "OR"
+                    ):
+                        _merge_experience_bounds(
+                            structured_requirements,
+                            None,
+                            value,
+                        )
+                elif field == "seniority" and isinstance(value, str):
+                    policy = get_seniority_policy(value)
+                    structured_requirements["seniority_filter"] = {
+                        "seniority": policy.seniority,
+                        "preferred_min_months": policy.preferred_min_months,
+                        "preferred_max_months": policy.preferred_max_months,
+                        "acceptable_min_months": policy.acceptable_min_months,
+                        "acceptable_max_months": policy.acceptable_max_months,
+                        "experience_scope": policy.experience_scope,
+                        "role_titles": [],
+                    }
             if "semantic_evidence_retrieval" in requirement.capabilities:
                 semantic_text = (
                     value.strip()
@@ -677,6 +901,19 @@ def execute_search(
                     if requirement.mandatory and not requirement.negated:
                         hard_semantic_requirements.append(semantic_text)
         semantic_requirements = graph_semantic
+
+        # Seniority policy is evaluated against overall experience for
+        # role-agnostic searches, and against matching role history when
+        # the recruiter also specified a role.
+        seniority_filter = structured_requirements.get("seniority_filter")
+        if seniority_filter:
+            requested_roles = list(structured_requirements.get("roles") or [])
+            seniority_filter["role_titles"] = requested_roles
+            if (
+                seniority_filter["experience_scope"] == "RELEVANT_ROLE"
+                and not requested_roles
+            ):
+                seniority_filter["experience_scope"] = "OVERALL"
 
     or_groups: dict[str, list] = {}
     for requirement in requirements:
@@ -1183,6 +1420,24 @@ def execute_search(
                 }), None)
             if matched_requirement:
                 failure["requirement_id"] = matched_requirement.id
+
+        if not validation["valid"]:
+            _allow_relevant_duration_partial_match(
+                validation=validation,
+                total_experience_months=getattr(
+                    item.get("candidate"),
+                    "total_experience_months",
+                    None,
+                ),
+                requirements=requirements,
+            )
+
+        if not validation["valid"]:
+            _allow_customer_relationship_partial_match(
+                validation=validation,
+                evidence=item.get("evidence", []),
+                requirements=requirements,
+            )
 
         if validation["valid"]:
             item["evidence"] = validation["supporting_evidence"]

@@ -1,96 +1,151 @@
-"""Small, conservative spell suggestions for recruiter search queries."""
+"""Local spell suggestions for recruiter search queries (no LLM, no API cost)."""
 
 import re
+from importlib.resources import files
+from typing import Callable, Iterable
 
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from symspellpy import SymSpell, Verbosity
 
-_SEARCH_VOCABULARY = set("""
-candidate candidates recruiter recruiters developer developers engineer engineers
-software backend frontend fullstack full stack data analyst analytics scientist
-manager management senior junior lead fresher graduate experience experienced
-year years month months worked work working built build building developed develop
-development designed design designing created create creating implemented implement
-integrated integration products product project projects system systems platform
-platforms scalable distributed architecture cloud database databases application
-applications python java javascript typescript react node angular django flask fastapi
-sql postgresql mysql mongodb oracle aws azure gcp docker kubernetes api apis rest
-microservices d365 dynamics microsoft crm erp finance salesforce power powerplatform
-machine learning artificial intelligence ai ml llm llms genai chatbot chatbots rag
-ecommerce e-commerce pune mumbai maharashtra india location remote hybrid
-with who has have in on for of and the a an to at looking find search
-""".split())
-
-_PROTECTED_TERMS = {
-    "ai", "ml", "llm", "llms", "d365", "crm", "erp", "sql", "api", "apis",
-    "aws", "gcp", "java", "python", "react", "node", "node.js", "c++", "c#",
-    "sap", "erp", "usa", "uk", "india",
+# Acronyms and short terms that must never be "corrected".
+PROTECTED = {
+    "ai", "ml", "llm", "llms", "sql", "aws", "gcp", "crm", "erp", "sap",
+    "api", "apis", "rag", "genai", "usa", "uk", "d365", "c++", "c#", "nodejs",
 }
 
+# Common query words that may not appear in your data.
+QUERY_WORDS = [
+    "candidate", "candidates", "recruiter", "recruiters", "developer",
+    "developers", "engineer", "engineers", "experience", "experienced",
+    "looking", "senior", "junior", "fresher", "graduate", "remote", "hybrid","onboarding", "contract", "permanent", "fulltime", "parttime", "internship",
+    "backend", "frontend", "fullstack", "analyst", "scientist", "manager","infosys", "tcs", "wipro", "hcl", "accenture", "capgemini", "cognizant",
+]
 
-def _edit_distance(left: str, right: str) -> int:
-    distance = [
-        [row + column for column in range(len(right) + 1)]
-        for row in range(len(left) + 1)
+DOMAIN_BOOST = 500_000_000   # beats similar general-English words
+WORD_RE = re.compile(r"[A-Za-z]+")
+
+_sym: SymSpell | None = None
+_known: set[str] = set(PROTECTED)
+
+
+# ---------- setup ----------
+
+def build_speller(domain_terms: Iterable[str] = ()) -> None:
+    """Build the global speller. Call once at startup (and after big data changes)."""
+    global _sym, _known
+    sym = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
+    pkg = files("symspellpy")
+    sym.load_dictionary(
+        str(pkg / "frequency_dictionary_en_82_765.txt"), term_index=0, count_index=1
+    )
+
+    known = set(PROTECTED)
+    for term in [*QUERY_WORDS, *domain_terms]:
+        for word in re.findall(r"[a-z0-9+#.]+", (term or "").lower()):
+            sym.create_dictionary_entry(word, DOMAIN_BOOST)
+            known.add(word)
+
+    _sym, _known = sym, known
+
+
+def load_domain_terms(db: Session) -> list[str]:
+    """Pull skills, titles, companies, cities, names from your DB.
+    ADJUST table/column names to your schema."""
+    queries = [
+        "SELECT DISTINCT name FROM skills",
+        "SELECT DISTINCT job_title FROM candidates",
+        "SELECT DISTINCT current_company FROM candidates",
+        "SELECT DISTINCT location FROM candidates",
+        "SELECT DISTINCT full_name FROM candidates",
     ]
-    for row, left_char in enumerate(left, start=1):
-        for column, right_char in enumerate(right, start=1):
-            distance[row][column] = min(
-                distance[row - 1][column] + 1,
-                distance[row][column - 1] + 1,
-                distance[row - 1][column - 1] + (left_char != right_char),
-            )
-            if (
-                row > 1
-                and column > 1
-                and left_char == right[column - 2]
-                and left[row - 2] == right_char
-            ):
-                distance[row][column] = min(
-                    distance[row][column],
-                    distance[row - 2][column - 2] + 1,
-                )
-    return distance[-1][-1]
+    terms: list[str] = []
+    for q in queries:
+        try:
+            terms += [r[0] for r in db.execute(text(q)) if r[0]]
+        except Exception:
+            db.rollback()   # a missing column shouldn't break startup
+    return terms
 
 
-def suggest_query_correction(query: str) -> str | None:
-    """Return a conservative corrected query when a clear typo is present."""
-    parts = []
-    cursor = 0
+# ---------- optional Postgres fallback ----------
+
+def make_trigram_fallback(db: Session) -> Callable[[str], str | None]:
+    """Fuzzy-match a word against skill names with pg_trgm.
+    One-time SQL:
+        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        CREATE INDEX IF NOT EXISTS idx_skills_trgm
+            ON skills USING gin (lower(name) gin_trgm_ops);
+    """
+    def fallback(word: str) -> str | None:
+        row = db.execute(
+            text(
+                "SELECT lower(name) FROM skills "
+                "WHERE similarity(lower(name), :w) >= 0.5 "
+                "ORDER BY similarity(lower(name), :w) DESC LIMIT 1"
+            ),
+            {"w": word},
+        ).first()
+        return row[0] if row else None
+
+    return fallback
+
+
+# ---------- main function ----------
+
+def _restore_case(original: str, corrected: str) -> str:
+    if original.isupper():
+        return corrected.upper()
+    if original[:1].isupper():
+        return corrected.capitalize()
+    return corrected
+
+
+def suggest_query_correction(
+    query: str,
+    fallback: Callable[[str], str | None] | None = None,
+) -> str | None:
+    """Return a corrected query, or None if nothing needs fixing."""
+    if _sym is None:
+        raise RuntimeError("Call build_speller() at startup first.")
+
     changed = False
-    for match in list(re.finditer(r"[A-Za-z][A-Za-z'-]*", query)):
-        parts.append(query[cursor:match.start()])
+
+    def fix(match: re.Match) -> str:
+        nonlocal changed
         original = match.group(0)
-        word = original.casefold()
-        if len(word) < 4 or word in _PROTECTED_TERMS or word in _SEARCH_VOCABULARY:
-            parts.append(original)
-            cursor = match.end()
-            continue
+        low = original.lower()
+        s, e = match.start(), match.end()
+        text_ = match.string
 
-        max_distance = 1 if len(word) < 8 else 2
-        candidates = [
-            ( _edit_distance(word, candidate), candidate)
-            for candidate in _SEARCH_VOCABULARY
-            if abs(len(word) - len(candidate)) <= max_distance
-        ]
-        if not candidates:
-            parts.append(original)
-            cursor = match.end()
-            continue
-        best_distance = min(distance for distance, _ in candidates)
-        best = sorted(candidate for distance, candidate in candidates if distance == best_distance)
-        if best_distance == 0 or best_distance > max_distance or len(best) != 1:
-            parts.append(original)
-            cursor = match.end()
-            continue
+        # Leave alone: tiny words, acronyms, known terms, valid words, and
+        # tokens glued to digits/symbols (d365, c++, node.js, python3).
+        if (
+            len(low) < 4
+            or original.isupper()
+            or low in _known
+            or low in _sym.words
+            or (s > 0 and (text_[s - 1].isdigit() or text_[s - 1] in "+#"))
+            or (e < len(text_) and (text_[e].isdigit() or text_[e] in "+#."))
+        ):
+            return original
 
-        corrected = best[0]
-        if original.isupper():
-            corrected = corrected.upper()
-        elif original[:1].isupper():
-            corrected = corrected.capitalize()
-        parts.append(corrected)
-        cursor = match.end()
+        max_dist = 1 if len(low) <= 5 else 2
+        hits = _sym.lookup(
+            low, Verbosity.TOP, max_edit_distance=max_dist, include_unknown=True
+        )
+        best = hits[0].term if hits else low
+
+        if best == low and fallback:
+            best = fallback(low) or low
+
+        if best == low:
+            return original
+
         changed = True
+        return _restore_case(original, best)
 
-    parts.append(query[cursor:])
-    suggestion = "".join(parts)
-    return suggestion if changed and suggestion.casefold() != query.casefold() else None
+    suggestion = WORD_RE.sub(fix, query)
+    if changed and suggestion.casefold() != query.casefold():
+        return suggestion
+    return None

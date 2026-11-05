@@ -1,8 +1,10 @@
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from threading import Lock
 from time import perf_counter
+from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,9 +21,10 @@ from app.storage.s3_resume import generate_resume_presigned_url
 
 from app.search.schema import SearchRequirement
 from app.search.service import build_routing_packet
-from app.search.spelling import suggest_query_correction
+from app.search.spelling import build_speller, suggest_query_correction
 
 from app.intelligence.pipeline import execute_search
+from app.intelligence.seniority_policy import get_seniority_policy
 
 
 # ============================================================
@@ -36,6 +39,45 @@ logging.basicConfig(
 logger = logging.getLogger("app.search.api")
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    build_speller()
+    yield
+
+
+def _seniority_filter_for_response(specification, structured: dict) -> dict | None:
+    requirement = next(
+        (
+            item
+            for item in specification.requirements
+            if (item.field or "").casefold() == "seniority"
+            and item.mandatory
+            and not item.negated
+            and set(item.capabilities)
+            & {"structured_candidate_lookup", "structured_experience_lookup"}
+        ),
+        None,
+    )
+    if requirement is None or not isinstance(requirement.value, str):
+        return None
+
+    policy = get_seniority_policy(requirement.value)
+    roles = list(structured.get("roles") or [])
+    experience_scope = policy.experience_scope
+    if experience_scope == "RELEVANT_ROLE" and not roles:
+        experience_scope = "OVERALL"
+
+    return {
+        "seniority": policy.seniority,
+        "preferred_min_months": policy.preferred_min_months,
+        "preferred_max_months": policy.preferred_max_months,
+        "acceptable_min_months": policy.acceptable_min_months,
+        "acceptable_max_months": policy.acceptable_max_months,
+        "experience_scope": experience_scope,
+        "role_titles": roles,
+    }
+
+
 # ============================================================
 # FastAPI application
 # ============================================================
@@ -43,6 +85,7 @@ logger = logging.getLogger("app.search.api")
 app = FastAPI(
     title="GenieHire Recruiter Search API",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 
@@ -92,6 +135,10 @@ class RuntimeFilters(BaseModel):
     roles: list[str] = Field(default_factory=list)
     seniority: list[str] = Field(default_factory=list)
     locations: list[LocationFilter] = Field(default_factory=list)
+    experience_min: float | None = Field(default=None, ge=0)
+    experience_max: float | None = Field(default=None, ge=0)
+    companies: list[str] = Field(default_factory=list)
+    domains: list[str] = Field(default_factory=list)
 
 
 class RefineSearchRequest(BaseModel):
@@ -100,10 +147,6 @@ class RefineSearchRequest(BaseModel):
     debug: bool = False
 
 
-# The routing packet produced by the initial LLM query-understanding step
-# is kept here for the lifetime of the running API process.  This is
-# intentionally an in-memory development store.  A production multi-worker
-# deployment should move this state to Redis or another shared store.
 _ROUTING_PACKET_STORE: dict[str, object] = {}
 _ROUTING_PACKET_LOCK = Lock()
 
@@ -161,7 +204,7 @@ def _make_runtime_requirement(
             "candidate_skills"
             if field == "skills"
             else "candidate_experience"
-            if field == "roles"
+            if field in {"roles", "companies"}
             else "candidate_location"
             if field == "location"
             else "candidate_total_experience"
@@ -177,38 +220,75 @@ def _make_runtime_requirement(
     )
 
 
+SENIORITY_BANDS: dict[str, tuple[float, float | None]] = {
+    "entry": (0.0, 2.0),
+    "mid": (3.0, 7.0),
+    "senior": (8.0, None),
+}
+
+
 def _seniority_ranges(selected: list[str]) -> list[tuple[float, float | None]]:
     """Translate UI seniority labels into total-experience ranges."""
     ranges: list[tuple[float, float | None]] = []
-
-    mapping = {
-        "entry": (0.0, 2.0),
-        "mid": (3.0, 7.0),
-        "senior": (8.0, None),
-    }
-
     for value in selected:
-        key = value.strip().casefold()
-        if key in mapping:
-            ranges.append(mapping[key])
+        bounds = SENIORITY_BANDS.get(value.strip().casefold())
+        if bounds is not None:
+            ranges.append(bounds)
 
     return ranges
 
 
+def _intersect_experience_ranges(
+    left: tuple[float, float | None],
+    right: tuple[float, float | None],
+) -> tuple[float, float | None] | None:
+    """Intersect ranges whose maximum includes the named full year."""
+    minimum = max(left[0], right[0])
+    finite_maxima = [maximum for maximum in (left[1], right[1]) if maximum is not None]
+    maximum = min(finite_maxima) if finite_maxima else None
+    if maximum is not None and minimum >= maximum + 1:
+        return None
+    return minimum, maximum
+
+
+def _make_runtime_experience_requirement(
+    minimum: float | None,
+    maximum: float | None,
+    *,
+    index: int,
+    relationship: str = "AND",
+    group_id: str | None = None,
+    original_text: str | None = None,
+) -> SearchRequirement:
+    label = original_text or (
+        f"{minimum:g}+ years experience"
+        if maximum is None
+        else f"{minimum:g}-{maximum:g} years experience"
+        if minimum is not None
+        else f"up to {maximum:g} years experience"
+    )
+    return SearchRequirement(
+        id=f"runtime_filter_experience_{index}",
+        original_text=label,
+        normalized_text=label.casefold(),
+        type="STRUCTURED",
+        mandatory=True,
+        match_mode="HARD",
+        source_of_truth="candidate_total_experience",
+        capabilities=["structured_candidate_lookup"],
+        relationship=relationship,
+        group_id=group_id,
+        field="experience",
+        value={
+            "min_experience_years": minimum,
+            "max_experience_years": maximum,
+        },
+        confidence=1.0,
+    )
+
+
 def _apply_runtime_filters(base_routing_packet, filters: RuntimeFilters):
-    """
-    Create a fresh routing packet from the original parsed packet and layer
-    runtime UI filters on top of it.
 
-    The original packet is never mutated. This is important because every
-    Apply action must mean:
-
-        original query interpretation + current filters
-
-    rather than:
-
-        previous filtered query + new filters
-    """
     routing_packet = deepcopy(base_routing_packet)
     specification = routing_packet.specification
 
@@ -217,6 +297,8 @@ def _apply_runtime_filters(base_routing_packet, filters: RuntimeFilters):
     skills = _clean_filter_values(filters.skills)
     roles = _clean_filter_values(filters.roles)
     seniority = _clean_filter_values(filters.seniority)
+    companies = _clean_filter_values(filters.companies)
+    domains = _clean_filter_values([domain.upper() for domain in filters.domains])
     # Accept only selected Geoapify suggestions, never arbitrary typed text.
     locations = []
     seen_locations = set()
@@ -247,8 +329,6 @@ def _apply_runtime_filters(base_routing_packet, filters: RuntimeFilters):
             )
         )
 
-    # Keep the specification-level structured fields synchronized with the
-    # runtime requirements so downstream retrieval sees the filters.
     base_skills = list(specification.skills or [])
     specification.skills = _clean_filter_values(base_skills + skills)
 
@@ -271,6 +351,44 @@ def _apply_runtime_filters(base_routing_packet, filters: RuntimeFilters):
 
         specification.roles = _clean_filter_values(
             list(specification.roles or []) + roles
+        )
+
+    # --------------------------------------------------------
+    # Companies: OR semantics within the filter
+    # --------------------------------------------------------
+    if companies:
+        company_group_id = "runtime_filter_companies"
+        for index, company in enumerate(companies, start=1):
+            specification.requirements.append(
+                _make_runtime_requirement(
+                    requirement_id=f"runtime_filter_company_{index}",
+                    text=company,
+                    field="companies",
+                    relationship="OR" if len(companies) > 1 else "AND",
+                    group_id=company_group_id if len(companies) > 1 else None,
+                )
+            )
+        specification.companies = _clean_filter_values(
+            list(specification.companies or []) + companies
+        )
+
+    if domains:
+        domain_label = ", ".join(domains)
+        specification.requirements.append(
+            SearchRequirement(
+                id="runtime_filter_domains",
+                original_text=f"Candidate domain: {domain_label}",
+                normalized_text=f"candidate domain: {domain_label}".casefold(),
+                type="STRUCTURED",
+                mandatory=True,
+                match_mode="HARD",
+                source_of_truth="candidate_resume",
+                capabilities=["structured_candidate_lookup"],
+                field="domains",
+                value=domains,
+                equivalent_terms=domains,
+                confidence=1.0,
+            )
         )
 
     # --------------------------------------------------------
@@ -306,57 +424,91 @@ def _apply_runtime_filters(base_routing_packet, filters: RuntimeFilters):
     # --------------------------------------------------------
     # Seniority: OR semantics between selected bands
     # --------------------------------------------------------
-    ranges = _seniority_ranges(seniority)
+    seniority_ranges = _seniority_ranges(seniority)
+    experience_range = (
+        filters.experience_min,
+        filters.experience_max,
+    )
+    has_experience_filter = any(value is not None for value in experience_range)
 
+    if seniority_ranges and has_experience_filter:
+        filtered_ranges = []
+        for value in seniority:
+            band_key = value.strip().casefold()
+            band_range = SENIORITY_BANDS.get(band_key)
+            if band_range is None:
+                continue
+            intersection = _intersect_experience_ranges(
+                band_range,
+                (
+                    experience_range[0] if experience_range[0] is not None else 0.0,
+                    experience_range[1],
+                ),
+            )
+            if intersection is not None:
+                filtered_ranges.append((intersection, value))
+        ranges = [intersection for intersection, _ in filtered_ranges]
+        if not ranges:
+            raise ValueError("Experience range and seniority selection don't overlap.")
+    elif seniority_ranges:
+        ranges = seniority_ranges
+        filtered_ranges = [(item, None) for item in ranges]
+    elif has_experience_filter:
+        ranges = [experience_range]
+        filtered_ranges = [(ranges[0], None)]
+    else:
+        ranges = []
+        filtered_ranges = []
+
+    runtime_minimum: float | None = None
     if ranges:
-        seniority_group_id = "runtime_filter_seniority"
-
-        for index, (minimum, maximum) in enumerate(ranges, start=1):
+        grouped_seniority = len(seniority_ranges) > 1
+        group_id = "runtime_filter_seniority" if grouped_seniority else None
+        for index, ((minimum, maximum), band_text) in enumerate(
+            filtered_ranges,
+            start=1,
+        ):
             specification.requirements.append(
-                SearchRequirement(
-                    id=f"runtime_filter_seniority_{index}",
-                    original_text=seniority[index - 1],
-                    normalized_text=(
-                        f"{minimum:g}-{maximum:g} years total experience"
-                        if maximum is not None
-                        else f"{minimum:g}+ years total experience"
-                    ),
-                    type="STRUCTURED",
-                    mandatory=True,
-                    match_mode="HARD",
-                    source_of_truth="candidate_total_experience",
-                    capabilities=["structured_candidate_lookup"],
-                    relationship="OR" if len(ranges) > 1 else "AND",
-                    group_id=seniority_group_id if len(ranges) > 1 else None,
-                    field="experience",
-                    value={
-                        "min_experience_years": minimum,
-                        "max_experience_years": maximum,
-                    },
-                    confidence=1.0,
+                _make_runtime_experience_requirement(
+                    minimum,
+                    maximum,
+                    index=index,
+                    relationship="OR" if grouped_seniority else "AND",
+                    group_id=group_id,
+                    original_text=band_text,
                 )
             )
 
-        # These bounds are intentionally broad enough to cover all selected
-        # bands. The OR requirements above preserve the exact selected bands
-        # for downstream requirement validation.
-        specification.min_experience_years = min(
-            minimum for minimum, _ in ranges
-        )
 
+        runtime_minimums = [
+            minimum for minimum, _ in ranges if minimum is not None
+        ]
+        runtime_minimum = min(runtime_minimums) if runtime_minimums else None
+        runtime_maximums = [maximum for _, maximum in ranges]
+        runtime_maximum = (
+            max(runtime_maximums)
+            if all(maximum is not None for maximum in runtime_maximums)
+            else None
+        )
+        base_minimum = specification.min_experience_years
+        base_maximum = specification.max_experience_years
+        minimums = [
+            value for value in (base_minimum, runtime_minimum) if value is not None
+        ]
+        specification.min_experience_years = max(minimums) if minimums else None
         finite_maximums = [
-            maximum for _, maximum in ranges if maximum is not None
+            value for value in (base_maximum, runtime_maximum) if value is not None
         ]
         specification.max_experience_years = (
-            max(finite_maximums) if len(finite_maximums) == len(ranges) else None
+            min(finite_maximums) if finite_maximums else None
         )
 
-    # Rebuild the structured requirement summary used by the intelligence
-    # layer. Preserve all original fields and replace only the runtime-
-    # affected values.
+
     structured = dict(routing_packet.structured_requirements or {})
     structured["skills"] = list(specification.skills or [])
     structured["roles"] = list(specification.roles or [])
+    structured["companies"] = list(specification.companies or [])
+    structured["domains"] = domains
     if locations:
         # The legacy summary has a scalar location field. The full selected
         # location set is preserved in the requirement graph (OR semantics).
@@ -364,6 +516,11 @@ def _apply_runtime_filters(base_routing_packet, filters: RuntimeFilters):
         structured["location_scope"] = "CANDIDATE"
     structured["min_experience_years"] = specification.min_experience_years
     structured["max_experience_years"] = specification.max_experience_years
+    if (
+        runtime_minimum is not None
+        and (base_minimum is None or runtime_minimum > base_minimum)
+    ):
+        structured["min_experience_exclusive"] = False
 
     if specification.roles:
         structured["role"] = specification.roles[0]
@@ -429,29 +586,6 @@ def search_candidates(
     request: SearchRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Main recruiter search endpoint.
-
-    Flow:
-
-        Recruiter query + manual skills
-                    ↓
-              Search Layer
-                    ↓
-              RoutingPacket
-                    ↓
-            Intelligence Layer
-                    ↓
-            PostgreSQL + Qdrant
-                    ↓
-               Validation
-                    ↓
-                Scoring
-                    ↓
-                Ranking
-                    ↓
-            Frontend response
-    """
 
     query = request.query.strip()
 
@@ -505,9 +639,6 @@ def search_candidates(
             manual_skills=manual_skills,
         )
 
-        # Store the original parsed routing packet. Runtime filter requests
-        # always start from this immutable base packet and never re-run the
-        # LLM query parser.
         _store_routing_packet(search_id, routing_packet)
 
         specification = routing_packet.specification
@@ -539,27 +670,6 @@ def search_candidates(
             routing_packet=routing_packet,
             trace=execution_trace,
         )
-
-        # ----------------------------------------------------
-        # 3. Build frontend-compatible parsed object
-        # ----------------------------------------------------
-        #
-        # Your frontend currently expects:
-        #
-        # parsed.original_query
-        # parsed.requested_count
-        # parsed.structured_requirements
-        # parsed.semantic_requirement
-        #
-        # Our internal RoutingPacket uses:
-        #
-        # query
-        # specification
-        # semantic_requirements
-        #
-        # So we translate between backend architecture
-        # and frontend response shape here.
-        # ----------------------------------------------------
 
         specification = routing_packet.specification
 
@@ -602,6 +712,7 @@ def search_candidates(
                 "roles": structured.get("roles") or [],
 
                 "companies": structured.get("companies") or [],
+                "domains": structured.get("domains") or [],
 
                 "location": structured.get("location"),
 
@@ -640,6 +751,10 @@ def search_candidates(
                     "RELEVANT"
                     if relevant_experience_months
                     else "OVERALL"
+                ),
+                "seniority_filter": _seniority_filter_for_response(
+                    specification,
+                    structured,
                 ),
             },
 
@@ -775,29 +890,12 @@ def search_candidates(
             ),
         )
 
-
-# ============================================================
-# Refine search endpoint
-# ============================================================
-
-
 @app.post("/search/refine")
 def refine_search(
     request: RefineSearchRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Refine an existing search using runtime filters.
 
-    This endpoint deliberately does NOT call build_routing_packet().
-    The original RoutingPacket is retrieved by search_id, runtime filters
-    are layered on top of it, and the intelligence pipeline runs again.
-
-    Therefore:
-
-        /search        -> LLM query understanding + retrieval
-        /search/refine -> retrieval only, no LLM query understanding
-    """
     request_started = perf_counter()
     search_id = request.search_id.strip()
 
@@ -821,11 +919,15 @@ def refine_search(
     filters = request.filters
 
     logger.info(
-        "REFINE REQUEST search_id=%s skills=%s roles=%s seniority=%s locations=%s",
+        "REFINE REQUEST search_id=%s skills=%s roles=%s seniority=%s "
+        "experience_min=%s experience_max=%s companies=%s locations=%s",
         search_id,
         filters.skills,
         filters.roles,
         filters.seniority,
+        filters.experience_min,
+        filters.experience_max,
+        filters.companies,
         filters.locations,
     )
 
@@ -883,6 +985,7 @@ def refine_search(
                 "skills": structured.get("skills") or [],
                 "roles": structured.get("roles") or [],
                 "companies": structured.get("companies") or [],
+                "domains": structured.get("domains") or [],
                 "location": structured.get("location"),
                 "role": (structured.get("roles") or [None])[0],
                 "recency_months": (
@@ -905,6 +1008,10 @@ def refine_search(
                     "RELEVANT"
                     if relevant_experience_months
                     else "OVERALL"
+                ),
+                "seniority_filter": _seniority_filter_for_response(
+                    specification,
+                    structured,
                 ),
             },
             "semantic_requirement": (
@@ -1109,9 +1216,6 @@ def view_candidate_resume(
                 "available."
             ),
         )
-
-    # Generate a fresh short-lived URL for the existing private S3 object.
-    # The URL is returned only; it is never persisted to the database.
 
     resume_url = generate_resume_presigned_url(
         storage_key

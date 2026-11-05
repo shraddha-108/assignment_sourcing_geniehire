@@ -4,22 +4,26 @@ import re
 import math
 from datetime import date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database.models.candidate import Candidate
 from app.database.models.candidate_skill import CandidateSkill
 from app.database.models.company import Company
 from app.database.models.experience import Experience
+from app.database.models.experience_skill import ExperienceSkill
 from app.database.models.role import Role
+from app.database.models.resume import Resume
 from app.database.models.skill import Skill
 from app.database.location_utils import location_matches
 
 from app.ingestion.vector.retrieval import retrieve_semantic_candidates
 from app.search.normalization import (
     canonicalize_semantic_requirement,
+    company_name_matches,
     equivalent_terms,
     expand_semantic_requirement,
+    role_matches as _role_matches,
 )
 
 
@@ -47,107 +51,106 @@ def _normalize(value: str | None) -> str:
     )
 
 
-def _tokenize(value: str | None) -> list[str]:
-    """Return role-title tokens in their original order."""
-    if not value:
-        return []
-
-    return re.findall(
-        r"[a-z0-9+#.]+",
-        value.lower(),
-    )
-
-
-_ROLE_MODIFIER_TOKENS = {
-    "senior",
-    "sr",
-    "junior",
-    "jr",
-    "lead",
-    "principal",
-    "staff",
-    "associate",
-    "trainee",
-    "i",
-    "ii",
-    "iii",
-    "iv",
-    "v",
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-}
-
-_ROLE_DOMAIN_EXCLUSIONS = {
-    "test",
-    "testing",
-    "qa",
-    "quality",
-    "assurance",
-    "automation",
-}
+def _as_date(value) -> date | None:
+    """Normalize SQL date/datetime/ISO values to date."""
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
 
 
-def _contains_role_phrase(
-    actual_tokens: list[str],
-    alias_tokens: list[str],
-) -> bool:
-    if not actual_tokens or not alias_tokens:
-        return False
-    width = len(alias_tokens)
-    return any(
-        actual_tokens[index:index + width] == alias_tokens
-        for index in range(len(actual_tokens) - width + 1)
-    )
+def _months_between(start: date, end: date) -> int:
+    """Return completed calendar months between two dates."""
+    months = (end.year - start.year) * 12 + end.month - start.month
+    if end.day < start.day:
+        months -= 1
+    return max(0, months)
 
 
-def _role_matches(
-    requested_role: str,
-    actual_role: str | None,
-) -> bool:
-    """Match real role titles without broad token-subset false positives."""
-    requested_tokens = list(_tokenize(requested_role))
-    actual_tokens = list(_tokenize(actual_role))
+def _combined_experience_months(
+    experiences: list[Experience],
+) -> int:
+    """
+    Sum experience durations without double-counting overlapping jobs.
+    Experiences without a valid start date do not contribute.
+    """
+    today = date.today()
+    intervals: list[tuple[date, date]] = []
 
-    if not requested_tokens or not actual_tokens:
-        return False
-
-    aliases = equivalent_terms(requested_role, "role") or [requested_role]
-
-    for alias in aliases:
-        alias_tokens = list(_tokenize(alias))
-        if not alias_tokens:
+    for experience in experiences:
+        start = _as_date(experience.start_date)
+        if start is None:
             continue
 
-        if not _contains_role_phrase(actual_tokens, alias_tokens):
+        end = (
+            today
+            if getattr(experience, "is_current", False)
+            else _as_date(experience.end_date)
+        )
+        if end is None or end < start:
             continue
 
-        extra_tokens = set(actual_tokens) - set(alias_tokens)
+        intervals.append((start, end))
 
-        # Domain modifiers such as QA/Test/Automation change the role domain
-        # and must not match a generic developer request.
-        if extra_tokens & _ROLE_DOMAIN_EXCLUSIONS:
-            continue
+    if not intervals:
+        return 0
 
-        # A generic "developer" request should include specializations such
-        # as Software Developer, Python Developer, Backend Developer, and
-        # Full Stack Developer. Keep QA/Test/Automation roles excluded above.
-        if requested_tokens == ["developer"]:
-            return True
+    intervals.sort(key=lambda interval: interval[0])
+    merged: list[list[date]] = []
 
-        # Seniority/level modifiers are legitimate variants of the same role.
-        if extra_tokens <= _ROLE_MODIFIER_TOKENS:
-            return True
+    for start, end in intervals:
+        if not merged or start > merged[-1][1] + timedelta(days=1):
+            merged.append([start, end])
+        elif end > merged[-1][1]:
+            merged[-1][1] = end
 
-        # If there are other words, only accept the exact role title. This
-        # prevents titles such as "Software Engineer Manager" from being
-        # treated as the requested individual-contributor role.
-        if _normalize(actual_role) == _normalize(alias):
-            return True
+    return sum(_months_between(start, end) for start, end in merged)
 
-    return False
+
+def _candidate_seniority_experience_months(
+    db: Session,
+    candidate: Candidate,
+    seniority_filter: dict,
+) -> int:
+    """
+    Resolve experience months for a seniority policy.
+
+    OVERALL uses the candidate's precomputed total. RELEVANT_ROLE sums
+    only experience records whose titles match the requested role family.
+    """
+    scope = seniority_filter.get("experience_scope", "OVERALL")
+
+    if scope != "RELEVANT_ROLE":
+        return int(candidate.total_experience_months or 0)
+
+    requested_roles = seniority_filter.get("role_titles") or []
+    if not requested_roles:
+        return int(candidate.total_experience_months or 0)
+
+    experiences = db.scalars(
+        select(Experience)
+        .join(Role, Role.id == Experience.role_id)
+        .where(Experience.candidate_id == candidate.id)
+    ).all()
+
+    matching_experiences = [
+        experience
+        for experience in experiences
+        if experience.role
+        and experience.role.title
+        and any(
+            _role_matches(requested_role, experience.role.title)
+            for requested_role in requested_roles
+        )
+    ]
+
+    return _combined_experience_months(matching_experiences)
 
 
 def retrieve_structured_candidates(
@@ -191,6 +194,12 @@ def retrieve_structured_candidates(
         "companies"
     ) or []
 
+    domains = {
+        str(domain).strip().upper()
+        for domain in requirements.get("domains") or []
+        if str(domain).strip()
+    }
+
     negated_companies = requirements.get(
         "negated_companies"
     ) or []
@@ -199,8 +208,7 @@ def retrieve_structured_candidates(
         requirements.get("location")
     )
 
-    # Geoapify selections are already structured city/state/country filters.
-    # Keep them separate from the legacy free-text location requirement.
+
     location_filters = requirements.get("location_filters") or []
 
     location_scope = (
@@ -226,17 +234,24 @@ def retrieve_structured_candidates(
         False,
     )
 
+    seniority_filter = requirements.get("seniority_filter")
+
     query = select(
         Candidate
     ).distinct()
 
-    # --------------------------------------------------
-    # Skill filter
-    #
-    # Positive skills are AND across requested skills.
-    # Aliases are OR within one requested skill.
-    # Negated skills are excluded completely.
-    # --------------------------------------------------
+    if domains:
+        domain_exists = (
+            select(Resume.candidate_id)
+            .where(
+                Resume.candidate_id == Candidate.id,
+                func.upper(Resume.primary_domain).in_(domains),
+            )
+            .exists()
+        )
+        query = query.where(domain_exists)
+
+
 
     skill_aliases = requirements.get("skill_aliases") or {}
 
@@ -269,37 +284,35 @@ def retrieve_structured_candidates(
             if not normalized_skill_names:
                 continue
 
-            skill_exists = (
-                select(CandidateSkill.candidate_id)
-                .join(
-                    Skill,
-                    Skill.id == CandidateSkill.skill_id,
+            if roles:
+                skill_exists = (
+                    select(ExperienceSkill.candidate_id)
+                    .join(Skill, Skill.id == ExperienceSkill.skill_id)
+                    .where(
+                        ExperienceSkill.candidate_id == Candidate.id,
+                        Skill.normalized_name.in_(normalized_skill_names),
+                    )
+                    .exists()
                 )
-                .where(
-                    CandidateSkill.candidate_id == Candidate.id,
-                    Skill.normalized_name.in_(
-                        normalized_skill_names
-                    ),
+            else:
+                skill_exists = (
+                    select(CandidateSkill.candidate_id)
+                    .join(
+                        Skill,
+                        Skill.id == CandidateSkill.skill_id,
+                    )
+                    .where(
+                        CandidateSkill.candidate_id == Candidate.id,
+                        Skill.normalized_name.in_(
+                            normalized_skill_names
+                        ),
+                    )
+                    .exists()
                 )
-                .exists()
-            )
 
             query = query.where(skill_exists)
 
-    # Negative technology requirements are intentionally NOT hard SQL filters.
-    # The validator must distinguish between:
-    #   1. technology absent -> MATCH
-    #   2. technology listed only as a candidate skill -> PARTIAL_MATCH
-    #   3. technology used in meaningful work evidence -> EXCLUDE
-    # Strict negative role/company/location/experience filters remain enforced
-    # below.
 
-    # --------------------------------------------------
-    # Role filter
-    #
-    # Positive roles are AND across requested roles.
-    # Negated roles exclude candidates who have any of them.
-    # --------------------------------------------------
 
     if roles or negated_roles:
         candidates = db.scalars(
@@ -365,21 +378,7 @@ def retrieve_structured_candidates(
 
     # --------------------------------------------------
     # Location filter
-    #
-    # IMPORTANT:
-    # Do not treat an EXPERIENCE location requirement
-    # as a candidate location requirement.
-    #
-    # The current retriever only has confirmed support
-    # for Candidate.location. Experience-location
-    # retrieval should be implemented after confirming
-    # the Experience model's actual location field.
-    # --------------------------------------------------
 
-    # Apply the legacy free-text location matcher only when there are no
-    # structured Geoapify selections. Otherwise the comma-separated label
-    # (for example, "Pune, Maharashtra, India") would be compared as one
-    # string against individual city/state/country fields and reject matches.
     if location and not location_filters:
 
         if location_scope == "CANDIDATE":
@@ -402,20 +401,6 @@ def retrieve_structured_candidates(
 
         elif location_scope == "EXPERIENCE":
 
-            # Do NOT fall back to candidate.location.
-            #
-            # If we do that, a candidate living in Pune
-            # could incorrectly match:
-            #
-            #   "worked at TCS in Pune"
-            #
-            # even when their TCS experience was actually
-            # in another location or the experience location
-            # is unknown.
-            #
-            # Experience-level location retrieval should be
-            # added once the Experience model's actual
-            # location field is confirmed.
             candidates = []
 
         else:
@@ -460,11 +445,12 @@ def retrieve_structured_candidates(
 
     if companies:
 
-        normalized_companies = {
-            _normalize(company)
+        company_aliases = requirements.get("company_aliases") or {}
+        company_terms = [
+            company_aliases.get(company) or [company]
             for company in companies
             if company
-        }
+        ]
 
         filtered = []
 
@@ -493,10 +479,7 @@ def retrieve_structured_candidates(
                     else None
                 )
 
-                if (
-                    _normalize(company_name)
-                    in normalized_companies
-                ):
+                if any(company_name_matches(company_name, aliases) for aliases in company_terms):
                     matched = True
                     break
 
@@ -568,17 +551,6 @@ def retrieve_structured_candidates(
                 total_months / 12.0
             )
 
-            # --------------------------------------------------
-            # Experience range semantics
-            # --------------------------------------------------
-            #
-            # Positive:
-            #   2-5 years -> KEEP candidates inside 2-5
-            #
-            # Negated:
-            #   NOT fresher -> EXCLUDE candidates inside 0-1
-            # --------------------------------------------------
-
             in_experience_range = True
 
             if min_experience is not None:
@@ -593,7 +565,7 @@ def retrieve_structured_candidates(
             if max_experience is not None:
                 maximum = float(max_experience)
 
-                if total_years > maximum:
+                if total_years >= maximum + 1:
                     in_experience_range = False
 
             if experience_negated:
@@ -605,6 +577,38 @@ def retrieve_structured_candidates(
             filtered.append(
                 candidate
             )
+
+        candidates = filtered
+
+    # --------------------------------------------------
+    # Seniority filter
+    # --------------------------------------------------
+
+    if seniority_filter:
+        acceptable_min = int(
+            seniority_filter.get("acceptable_min_months", 0)
+        )
+        acceptable_max = seniority_filter.get("acceptable_max_months")
+
+        filtered = []
+
+        for candidate in candidates:
+            experience_months = _candidate_seniority_experience_months(
+                db,
+                candidate,
+                seniority_filter,
+            )
+
+            if experience_months < acceptable_min:
+                continue
+
+            if (
+                acceptable_max is not None
+                and experience_months > int(acceptable_max)
+            ):
+                continue
+
+            filtered.append(candidate)
 
         candidates = filtered
 

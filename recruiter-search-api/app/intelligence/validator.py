@@ -10,12 +10,17 @@ from sqlalchemy.orm import Session
 from app.database.models.candidate import Candidate
 from app.database.models.candidate_skill import CandidateSkill
 from app.database.models.experience import Experience
+from app.database.models.experience_skill import ExperienceSkill
+from app.database.models.skill import Skill
 from app.database.models.resume_section import ResumeSection
 from app.database.location_utils import format_candidate_location, location_matches
+from app.intelligence.seniority_policy import get_seniority_policy, classify_experience_fit
 from app.search.normalization import (
+    company_name_matches,
     equivalent_terms,
     industry_evidence_matches,
     industry_evidence_terms,
+    role_matches as _role_matches,
 )
 
 
@@ -113,6 +118,73 @@ _BUILT_PRODUCT_TERMS = _PRODUCT_TERMS - {
 SEMANTIC_SUPPORT_MIN_RERANKER_SCORE = float(
     os.getenv("SEMANTIC_SUPPORT_MIN_RERANKER_SCORE", "0.0")
 )
+_CUSTOMER_RELATIONSHIP_SIGNALS = re.compile(
+    r"\b(?:CRM|customer relationship management|client relationship management|"
+    r"account management|relationship manager|account manager|customer success|"
+    r"customer engagement|customer retention|client relationships?|salesforce|hubspot|"
+    r"dynamics\s*(?:365\s*)?(?:CRM|customer engagement)|"
+    r"d365\s*(?:CRM|customer engagement)|zoho\s*CRM)\b",
+    re.IGNORECASE,
+)
+_CUSTOMER_RELATIONSHIP_ADJACENT_SIGNALS = re.compile(
+    r"\b(?:d365|dynamics\s*365|dynamics\s*ax|finance\s*(?:&|and)\s*operations)\b",
+    re.IGNORECASE,
+)
+_CUSTOMER_RELATIONSHIP_WORK_ACTIONS = re.compile(
+    r"\b(?:administered|analyzed|automated|built|configured|consulted|coordinated|"
+    r"created|customized|delivered|deployed|designed|developed|engaged|executed|"
+    r"facilitated|handled|implemented|integrated|led|leveraged|maintained|managed|"
+    r"migrated|monitored|operated|oversaw|owned|processed|provided|supported|"
+    r"strengthened|streamlined|tracked|trained|used|utilized|worked)\b",
+    re.IGNORECASE,
+)
+_CUSTOMER_RELATIONSHIP_ROLE_TITLES = re.compile(
+    r"\b(?:customer success|account|relationship|crm)\s+"
+    r"(?:manager|administrator|analyst|consultant|developer|engineer|"
+    r"executive|lead|representative|specialist)\b",
+    re.IGNORECASE,
+)
+
+
+def is_customer_relationship_requirement(requirement: str) -> bool:
+    return bool(_CUSTOMER_RELATIONSHIP_SIGNALS.search(requirement))
+
+
+def customer_relationship_partial_evidence(
+    requirement: str,
+    evidence_text: str,
+    evidence_type: str | None = None,
+) -> str | None:
+    """Find related Dynamics evidence that does not confirm CRM experience."""
+    if not is_customer_relationship_requirement(requirement):
+        return None
+    if (evidence_type or "").casefold() in {"skill", "skills", "education"}:
+        return None
+    for sentence in _semantic_sentences(evidence_text):
+        has_direct_signal = bool(_CUSTOMER_RELATIONSHIP_SIGNALS.search(sentence))
+        has_adjacent_signal = bool(
+            _CUSTOMER_RELATIONSHIP_ADJACENT_SIGNALS.search(sentence)
+        )
+        has_work_context = bool(
+            _CUSTOMER_RELATIONSHIP_WORK_ACTIONS.search(sentence)
+            or _CUSTOMER_RELATIONSHIP_ROLE_TITLES.search(sentence)
+        )
+        if (
+            has_adjacent_signal and not has_direct_signal
+        ) or (
+            has_direct_signal and not has_work_context
+        ):
+            return sentence
+    return None
+
+
+def customer_relationship_partial_reason(evidence_text: str) -> str:
+    if (
+        _CUSTOMER_RELATIONSHIP_ADJACENT_SIGNALS.search(evidence_text)
+        and not _CUSTOMER_RELATIONSHIP_SIGNALS.search(evidence_text)
+    ):
+        return "Related Dynamics experience was found, but CRM-specific work was not confirmed."
+    return "A CRM platform or project is mentioned, but hands-on CRM work is unclear."
 
 
 def _semantic_sentences(text: str) -> list[str]:
@@ -214,6 +286,22 @@ def _experience_duration_months(experience: Experience) -> int | None:
     if end_date.day < experience.start_date.day:
         months -= 1
     return max(0, months)
+
+
+_ROLE_LEVEL_PREFIXES = {
+    "junior", "jr", "senior", "sr", "lead", "principal",
+    "staff", "associate", "assistant", "chief", "head",
+}
+_ROLE_LEVEL_SUFFIXES = {"i", "ii", "iii", "iv", "v", "1", "2", "3", "4", "5"}
+
+
+def _normalize_role_for_match(value: str | None) -> str:
+    ordered = re.findall(r"[a-z0-9+#.]+", (value or "").casefold())
+    while ordered and ordered[0] in _ROLE_LEVEL_PREFIXES:
+        ordered.pop(0)
+    while ordered and ordered[-1] in _ROLE_LEVEL_SUFFIXES:
+        ordered.pop()
+    return " ".join(ordered)
 
 
 def _combined_experience_months(experiences: list[Experience]) -> int:
@@ -467,7 +555,9 @@ def _semantic_support_score(
     sentence: str,
     evidence_type: str | None,
 ) -> float:
-    if industry_evidence_terms(requirement):
+    if _CUSTOMER_RELATIONSHIP_SIGNALS.search(requirement):
+        base_score = 0.9 if _CUSTOMER_RELATIONSHIP_SIGNALS.search(sentence) else 0.0
+    elif industry_evidence_terms(requirement):
         base_score = 0.85 if industry_evidence_matches(sentence, requirement) else 0.0
     elif _is_distributed_system_requirement(requirement):
         base_score = 0.9
@@ -671,7 +761,8 @@ def _supports_semantic_requirement(
         if token not in _SEMANTIC_STOP_WORDS
     }
     specialized_requirement = (
-        _is_ml_project_requirement(requirement)
+        bool(_CUSTOMER_RELATIONSHIP_SIGNALS.search(requirement))
+        or _is_ml_project_requirement(requirement)
         or _is_ai_build_requirement(requirement)
         or _has_ai_concept(requirement_tokens)
         or _is_ecommerce_build_requirement(requirement)
@@ -684,6 +775,17 @@ def _supports_semantic_requirement(
     if industry_evidence_terms(requirement):
         for sentence in _semantic_sentences(evidence_text):
             if industry_evidence_matches(sentence, requirement):
+                return sentence
+
+    if _CUSTOMER_RELATIONSHIP_SIGNALS.search(requirement):
+        for sentence in _semantic_sentences(evidence_text):
+            if (
+                _CUSTOMER_RELATIONSHIP_SIGNALS.search(sentence)
+                and (
+                    _CUSTOMER_RELATIONSHIP_WORK_ACTIONS.search(sentence)
+                    or _CUSTOMER_RELATIONSHIP_ROLE_TITLES.search(sentence)
+                )
+            ):
                 return sentence
 
     if _is_microsoft_ecosystem_requirement(requirement):
@@ -800,85 +902,12 @@ def _is_cloud_technology_requirement(requirement: str) -> bool:
     ))
 
 
-_ROLE_LEVEL_PREFIXES = {
-    "junior", "jr", "senior", "sr", "lead", "principal",
-    "staff", "associate", "assistant", "chief", "head",
-}
-
-_ROLE_LEVEL_SUFFIXES = {
-    "i", "ii", "iii", "iv", "v", "1", "2", "3", "4", "5",
-}
-
-
-def _normalize_role_for_match(value: str | None) -> str:
-    tokens = list(_tokens(value))
-    if not tokens:
-        return ""
-
-    # _tokens() returns a set, so rebuild from the normalized text to preserve
-    # role-word order. Seniority/level markers are modifiers, not the role
-    # family itself.
-    ordered = re.findall(r"[a-z0-9+#.]+", (value or "").casefold())
-    while ordered and ordered[0] in _ROLE_LEVEL_PREFIXES:
-        ordered.pop(0)
-    while ordered and ordered[-1] in _ROLE_LEVEL_SUFFIXES:
-        ordered.pop()
-    return " ".join(ordered)
-
-
-def _role_matches(
-    requested_role: str,
-    actual_role: str | None,
-) -> bool:
-    """Match role families without treating arbitrary token overlap as a role match."""
-    requested_normalized = _normalize_role_for_match(requested_role)
-    actual_normalized = _normalize_role_for_match(actual_role)
-
-    if not requested_normalized or not actual_normalized:
-        return False
-
-    # Exact normalized role remains the primary rule.
-    if requested_normalized == actual_normalized:
-        return True
-
-    # A generic developer search should include specific developer roles,
-    # such as Backend Developer and Full Stack Developer, but not QA/testing
-    # or automation-focused roles.
-    if requested_normalized == "developer":
-        actual_tokens = set(_tokens(actual_normalized))
-        excluded_domains = {
-            "qa",
-            "quality",
-            "test",
-            "testing",
-            "automation",
-        }
-        if actual_tokens & excluded_domains:
-            return False
-        return "developer" in actual_tokens
-
-    # Canonical role aliases remain exact role-family matches after
-    # seniority/level modifiers are removed.
-    for alias in equivalent_terms(requested_role, "role"):
-        if _normalize_role_for_match(alias) == actual_normalized:
-            return True
-
-    return False
-
-
 def _company_matches(
     requested_company: str,
     actual_company: str | None,
+    equivalents: list[str] | None = None,
 ) -> bool:
-
-    return (
-        _normalize(
-            requested_company
-        )
-        == _normalize(
-            actual_company
-        )
-    )
+    return company_name_matches(actual_company, equivalents or [requested_company])
 
 
 def _matching_evidence(
@@ -1021,41 +1050,102 @@ def validate_structured_requirements(
         ).all()
 
     if requested_skills:
-
-        candidate_skill_rows = db.scalars(
-            select(CandidateSkill)
-            .where(
-                CandidateSkill.candidate_id
-                == candidate_id
-            )
-        ).all()
-
-        candidate_skills = {
-            _normalize(row.skill.normalized_name): row
-            for row in candidate_skill_rows
-            if row.skill
-        }
+        if requested_roles:
+            matching_role_experience_ids = {
+                experience.id
+                for experience in role_experiences
+                if experience.role
+                and experience.role.title
+                and any(
+                    _role_matches(requested_role, experience.role.title)
+                    for requested_role in requested_roles
+                )
+            }
+            experience_skill_rows = db.scalars(
+                select(ExperienceSkill)
+                .join(Skill, Skill.id == ExperienceSkill.skill_id)
+                .where(
+                    ExperienceSkill.candidate_id == candidate_id,
+                )
+            ).all()
+            experience_skills = {
+                _normalize(row.skill.normalized_name): row
+                for row in experience_skill_rows
+                if row.skill and row.experience_id in matching_role_experience_ids
+            }
+            candidate_skills = {}
+        else:
+            candidate_skill_rows = db.scalars(
+                select(CandidateSkill)
+                .where(
+                    CandidateSkill.candidate_id
+                    == candidate_id
+                )
+            ).all()
+            candidate_skills = {
+                _normalize(row.skill.normalized_name): row
+                for row in candidate_skill_rows
+                if row.skill
+            }
+            experience_skills = {}
 
         for skill in requested_skills:
 
             alias_terms = skill_alias_groups.get(skill) or equivalent_terms(skill, "skill") or [skill]
-            skill_row = next((candidate_skills.get(_normalize(alias))
-                for alias in alias_terms if candidate_skills.get(_normalize(alias))), None)
-            if skill_row is None:
+            normalized_aliases = [_normalize(alias) for alias in alias_terms]
+            skill_row = next(
+                (
+                    candidate_skills.get(alias)
+                    for alias in normalized_aliases
+                    if candidate_skills.get(alias)
+                ),
+                None,
+            )
+            experience_skill_row = next(
+                (
+                    experience_skills.get(alias)
+                    for alias in normalized_aliases
+                    if experience_skills.get(alias)
+                ),
+                None,
+            )
+            matched_skill = experience_skill_row if requested_roles else skill_row
+            if matched_skill is None:
                 failures.append(
                     {
                         "type": "SKILL",
                         "required": skill,
+                        **(
+                            {"reason": "Skill is not linked to a matching role experience"}
+                            if requested_roles
+                            else {}
+                        ),
                     }
                 )
             else:
                 skill_evidence = []
                 if requested_roles:
-                    # Skills and roles are independent structured requirements.
-                    # The role requirement is validated separately below; do not
-                    # require the skill to appear in that experience description.
-                    skill_evidence = []
-                if not requested_roles and skill_row.evidence:
+                    experience = next(
+                        (
+                            item
+                            for item in role_experiences
+                            if item.id == experience_skill_row.experience_id
+                        ),
+                        None,
+                    )
+                    skill_evidence = [
+                        {
+                            "candidate_id": candidate_id,
+                            "evidence_type": "experience",
+                            "source_id": experience_skill_row.id,
+                            "source_kind": "experience_record",
+                            "experience_id": experience_skill_row.experience_id,
+                            "text": experience_skill_row.evidence
+                            or (experience.description if experience else None),
+                            "retrieval_score": 0.0,
+                        }
+                    ]
+                elif skill_row.evidence:
                     skill_evidence.append({
                         "candidate_id": candidate_id,
                         "evidence_type": "skill",
@@ -1069,7 +1159,7 @@ def validate_structured_requirements(
                         skill,
                         preferred_types={"skills", "experience", "project"},
                     )
-                add_match("skill", skill, skill_row.skill.name, skill_evidence)
+                add_match("skill", skill, matched_skill.skill.name, skill_evidence)
 
     # --------------------------------------------------
     # Total experience
@@ -1115,7 +1205,7 @@ def validate_structured_requirements(
             * 12
         )
 
-        if actual_months > maximum_months:
+        if actual_months >= maximum_months + 12:
 
             failures.append(
                 {
@@ -1134,7 +1224,7 @@ def validate_structured_requirements(
     )
     experience_passes = (
         minimum_passes
-        and (maximum_years is None or actual_months <= float(maximum_years) * 12)
+        and (maximum_years is None or actual_months < (float(maximum_years) + 1) * 12)
     )
     if minimum_years is not None or maximum_years is not None:
         if experience_passes:
@@ -1143,6 +1233,96 @@ def validate_structured_requirements(
                 _experience_requirement_label(minimum_years, maximum_years),
                 _format_months(actual_months),
             )
+
+    # --------------------------------------------------
+    # Seniority
+    # --------------------------------------------------
+
+    seniority_filter = requirements.get("seniority_filter")
+    if seniority_filter:
+        seniority_value = seniority_filter.get("seniority")
+        policy = get_seniority_policy(seniority_value)
+
+        if policy is not None:
+            experience_scope = seniority_filter.get(
+                "experience_scope",
+                policy.experience_scope,
+            )
+            requested_seniority_roles = seniority_filter.get("role_titles") or []
+
+            if experience_scope == "RELEVANT_ROLE" and requested_seniority_roles:
+                seniority_experiences = db.scalars(
+                    select(Experience).where(
+                        Experience.candidate_id == candidate_id
+                    )
+                ).all()
+
+                matching_experiences = [
+                    experience
+                    for experience in seniority_experiences
+                    if experience.role
+                    and experience.role.title
+                    and any(
+                        _role_matches(requested_role, experience.role.title)
+                        for requested_role in requested_seniority_roles
+                    )
+                ]
+
+                dated_matching_experiences = [
+                    experience
+                    for experience in matching_experiences
+                    if _experience_duration_months(experience) is not None
+                ]
+
+                seniority_months = (
+                    _combined_experience_months(dated_matching_experiences)
+                    if dated_matching_experiences
+                    else None
+                )
+            else:
+                experience_scope = "OVERALL"
+                seniority_months = (
+                    int(candidate.total_experience_months)
+                    if candidate.total_experience_months is not None
+                    else None
+                )
+
+            seniority_fit = (
+                classify_experience_fit(seniority_months, policy)
+                if seniority_months is not None
+                else "OUTSIDE"
+            )
+
+            if seniority_fit == "OUTSIDE":
+                failures.append({
+                    "type": "SENIORITY",
+                    "required": policy.seniority,
+                    "experience_scope": experience_scope,
+                    "actual_months": seniority_months,
+                    "acceptable_min_months": policy.acceptable_min_months,
+                    "acceptable_max_months": policy.acceptable_max_months,
+                    "reason": (
+                        "Experience could not be established from dated records"
+                        if seniority_months is None
+                        else "Candidate experience is outside the acceptable seniority range"
+                    ),
+                })
+            else:
+                matched.append({
+                    "type": "seniority",
+                    "requirement": policy.seniority,
+                    "matched": True,
+                    "candidate_value": _format_months(seniority_months),
+                    "seniority": policy.seniority,
+                    "seniority_fit": seniority_fit,
+                    "experience_months": seniority_months,
+                    "experience_scope": experience_scope,
+                    "preferred_min_months": policy.preferred_min_months,
+                    "preferred_max_months": policy.preferred_max_months,
+                    "acceptable_min_months": policy.acceptable_min_months,
+                    "acceptable_max_months": policy.acceptable_max_months,
+                    "evidence": [],
+                })
 
     # --------------------------------------------------
     # Roles
@@ -1198,6 +1378,7 @@ def validate_structured_requirements(
     )
 
     if requested_companies:
+        company_aliases = requirements.get("company_aliases") or {}
 
         experiences = db.scalars(
             select(Experience)
@@ -1212,7 +1393,11 @@ def validate_structured_requirements(
                 (
                     experience for experience in experiences
                     if experience.company and experience.company.name
-                    and _company_matches(company, experience.company.name)
+                    and _company_matches(
+                        company,
+                        experience.company.name,
+                        company_aliases.get(company),
+                    )
                 ),
                 None,
             )
@@ -1454,7 +1639,12 @@ def validate_candidate(
             elif field in {"role", "roles"} and isinstance(value, str):
                 requirement_filter = {"roles": [value]}
             elif field in {"company", "companies"} and isinstance(value, str):
-                requirement_filter = {"companies": [value]}
+                requirement_filter = {
+                    "companies": [value],
+                    "company_aliases": {
+                        value: alternative.equivalent_terms or [value]
+                    },
+                }
             elif field == "location" and isinstance(value, str):
                 requirement_filter = {"location": value}
             elif field in {"experience", "total_experience"} and isinstance(value, dict):
@@ -1593,7 +1783,12 @@ def validate_candidate(
         elif field in {"role", "roles"} and isinstance(value, str):
             requirement_filter = {"roles": [value]}
         elif field in {"company", "companies"} and isinstance(value, str):
-            requirement_filter = {"companies": [value]}
+            requirement_filter = {
+                "companies": [value],
+                "company_aliases": {
+                    value: requirement.equivalent_terms or [value]
+                },
+            }
         elif field == "location" and isinstance(value, str):
             requirement_filter = {"location": value}
         elif field in {"experience", "total_experience"} and isinstance(value, dict):
@@ -1790,7 +1985,12 @@ def validate_candidate(
                 elif field in {"role", "roles"} and value:
                     requirement_filter = {"roles": [str(value)]}
                 elif field == "company" and value:
-                    requirement_filter = {"companies": [str(value)]}
+                    requirement_filter = {
+                        "companies": [str(value)],
+                        "company_aliases": {
+                            str(value): alternative.equivalent_terms or [str(value)]
+                        },
+                    }
                 elif field == "location" and value:
                     requirement_filter = {"location": str(value)}
                 else:
@@ -2194,14 +2394,18 @@ def validate_candidate(
                 }]
             else:
                 expected_type = {
-                    "skill": "skill", "skills": "skill",
-                    "role": "role", "roles": "role",
-                    "company": "company", "companies": "company",
+                    "skill": "skill", 
+                    "skills": "skill",
+                    "role": "role", 
+                    "roles": "role",
+                    "company": "company", 
+                    "companies": "company",
                     "location": "location",
                     "experience": "experience",
                     "total_experience": "experience",
                     "min_experience_years": "experience",
                     "max_experience_years": "experience",
+                    "seniority": "seniority",
                 }.get(field)    
                 if expected_type:
                     linked = [
