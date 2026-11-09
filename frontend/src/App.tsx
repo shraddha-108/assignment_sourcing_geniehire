@@ -364,6 +364,9 @@ function App() {
   function updateContactStatus(candidateId: number, status: ContactStatus) {
     const now = new Date().toISOString();
     const existing = contacts.find((contact) => contact.candidate.id === candidateId);
+    const contactedAt = status === "To contact"
+      ? null
+      : existing?.contactedAt ?? now;
     const candidate = shortlistedCandidates.find((item) => item.id === candidateId) ??
       data?.results.find((item) => item.id === candidateId) ??
       existing?.candidate;
@@ -374,14 +377,14 @@ function App() {
           candidate: contactCandidateSnapshot(candidate),
           status,
           updatedAt: now,
-          contactedAt: status === "Contacted" ? existing.contactedAt ?? now : existing.contactedAt,
+          contactedAt,
         }
       : {
           candidate: contactCandidateSnapshot(candidate),
           status,
           addedAt: now,
           updatedAt: now,
-          contactedAt: status === "Contacted" ? now : null,
+          contactedAt,
           sourceQuery: data?.parsed.original_query?.trim() || query.trim() || null,
         };
     const nextContacts = existing

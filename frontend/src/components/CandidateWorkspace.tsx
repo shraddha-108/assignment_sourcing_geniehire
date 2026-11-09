@@ -1,5 +1,5 @@
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "react";
-import { CONTACT_STATUSES, type ContactRecord, type ContactStatus } from "../features/contacts/contactTracker";
+import { CONTACT_STATUSES, getContactedContacts, type ContactRecord, type ContactStatus } from "../features/contacts/contactTracker";
 import { getCandidateDisplayMatchStatus } from "../features/candidates/candidateWorkflow";
 import type { Candidate, CandidateView, ContactCandidate, StructuredRequirements } from "../types/candidate";
 import { buildMailtoLink, formatMonths, getInitials, normalizeExternalUrl } from "../features/candidates/candidatePresentation";
@@ -52,6 +52,7 @@ type CandidateWorkspaceProps = {
 
 export function CandidateWorkspace({ state, data, actions, tabScrollRef, tabScrollPositionsRef }: CandidateWorkspaceProps) {
   const { candidateView, shortlistedCandidates, hiddenCandidates, contacts, contactsStorageError, compareCandidateIds, outreachSubject, outreachMessage, outreachCandidateIds } = state;
+  const contactedContacts = getContactedContacts(contacts);
   const { visibleResultCandidates, activeCandidates, compareCandidates, outreachCandidates, requirements, seniorityPolicy, searchQuery } = data;
   const { navigateCandidateView, openProfile, updateContactStatus, removeContact, setOutreachCandidateIds, continueToOutreach, setOutreachSubject, setOutreachMessage, toggleCompare, hideCandidate, restoreCandidate, toggleShortlist } = actions;
   return (
@@ -80,7 +81,7 @@ export function CandidateWorkspace({ state, data, actions, tabScrollRef, tabScro
                           aria-pressed={candidateView === "contacts"}
                           onClick={() => navigateCandidateView("contacts")}
                         >
-                          Contacts <span>{contacts.length}</span>
+                          Contacts <span>{contactedContacts.length}</span>
                         </button>
                         <button
                           type="button"
@@ -119,15 +120,15 @@ export function CandidateWorkspace({ state, data, actions, tabScrollRef, tabScro
                           <div>
                             <span className="workflow-eyebrow">CANDIDATE PIPELINE</span>
                             <h3>Contacts</h3>
-                            <p>Track who you plan to contact and what happened next. Opening a draft does not mark it as sent.</p>
+                            <p>Track candidates you have contacted and what happened next.</p>
                           </div>
                         </div>
                         {contactsStorageError && (
                           <p className="contacts-storage-error" role="alert">{contactsStorageError}</p>
                         )}
-                        {contacts.length ? (
+                        {contactedContacts.length ? (
                           <div className="contacts-list">
-                            {contacts.map((contact) => {
+                            {contactedContacts.map((contact) => {
                               const candidate = contact.candidate;
                               return (
                                 <article className="contact-row" key={candidate.id}>
@@ -196,7 +197,7 @@ export function CandidateWorkspace({ state, data, actions, tabScrollRef, tabScro
                           </div>
                         ) : (
                           <div className="outreach-empty">
-                            No contacts yet. Compare shortlisted candidates and continue to outreach to add finalists here.
+                            No candidates contacted yet. After sending an email, mark the candidate as contacted from Outreach.
                           </div>
                         )}
                         <p className="contacts-storage-note">Contacts are saved in this browser on this device.</p>

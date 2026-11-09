@@ -18,6 +18,12 @@ export type ContactRecord<T extends { id: number }> = {
   sourceQuery: string | null;
 };
 
+export function getContactedContacts<T extends { id: number }>(
+  contacts: ContactRecord<T>[],
+): ContactRecord<T>[] {
+  return contacts.filter((contact) => contact.status !== "To contact");
+}
+
 type ContactStorageResult<T> = {
   value: T | null;
   error: string | null;
