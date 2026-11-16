@@ -18,6 +18,7 @@ def embed_text(text: str) -> list[float]:
     vector = model.encode(
         text,
         normalize_embeddings=True,
+        show_progress_bar=False,
     )
 
     return vector.tolist()

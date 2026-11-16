@@ -1,4 +1,3 @@
-
 [
   {
     "query_id": "Q001",
@@ -38,6 +37,26 @@
   },
   {
     "query_id": "Q010",
-    "query": "find candidates with 2 years of experience in d365"
+    "query": "Find candidates with 2 years of experience in D365."
+  },
+  {
+    "query_id": "Q011",
+    "query": "Find QA engineers with Selenium experience who have worked on automation testing frameworks."
+  },
+  {
+    "query_id": "Q012",
+    "query": "Find candidates with Java and Spring Boot experience."
+  },
+  {
+    "query_id": "Q013",
+    "query": "Find candidates with Docker and CI/CD experience."
+  },
+  {
+    "query_id": "Q014",
+    "query": "Find data engineers with Python and SQL experience."
+  },
+  {
+    "query_id": "Q015",
+    "query": "Find candidates with mobile application experience who have worked on Android or React Native."
   }
 ]

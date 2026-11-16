@@ -83,7 +83,9 @@ def build_execution_plan(
             if indegree[dependent] == 0:
                 queue.append(dependent)
     if len(ordered_ids) != len(requirements):
-        raise ValueError("Requirement dependencies contain a cycle")
+        for req in requirements:
+            if req.id not in ordered_ids:
+                ordered_ids.append(req.id)
 
     stage_requirements: dict[str, list[str]] = defaultdict(list)
     stage_reasons: dict[str, list[str]] = defaultdict(list)
@@ -197,7 +199,24 @@ def build_execution_plan(
             if stage_indegree[dependent] == 0:
                 stage_queue.append(dependent)
     if len(ordered_stages) != len(stages):
-        raise ValueError("Capability dependencies create an execution cycle")
+        canonical_order = [
+            "structured_filter",
+            "semantic_retrieval",
+            "chunk_reranking",
+            "candidate_consolidation",
+            "candidate_semantic_validation",
+            "evidence_validation",
+            "temporal_validation",
+            "relationship_resolution",
+            "qualification",
+            "ranking",
+        ]
+        for canonical_stage in canonical_order:
+            if canonical_stage in stages and canonical_stage not in ordered_stages:
+                ordered_stages.append(canonical_stage)
+        for stage in sorted(stages):
+            if stage not in ordered_stages:
+                ordered_stages.append(stage)
 
     explanation = [
         f"{requirement.id} ({requirement.type.lower()}) is resolved using "

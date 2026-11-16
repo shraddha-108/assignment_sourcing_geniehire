@@ -25,11 +25,17 @@ def _get_reranker() -> CrossEncoder:
     global _reranker
 
     if _reranker is None:
-
-        _reranker = CrossEncoder(
-            MODEL_NAME,
-            max_length=384,
-        )
+        try:
+            _reranker = CrossEncoder(
+                MODEL_NAME,
+                max_length=256,
+                local_files_only=True,
+            )
+        except Exception:
+            _reranker = CrossEncoder(
+                MODEL_NAME,
+                max_length=256,
+            )
 
     return _reranker
 

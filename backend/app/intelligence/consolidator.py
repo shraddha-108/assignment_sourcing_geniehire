@@ -4,6 +4,7 @@ import re
 
 
 MAX_EVIDENCE_PER_CANDIDATE = max(1, int(os.getenv("MAX_EVIDENCE_PER_CANDIDATE", "3")))
+MAX_EVIDENCE_DROP_OFF = float(os.getenv("MAX_EVIDENCE_DROP_OFF", "4.5"))
 
 
 def consolidate_semantic_evidence(
@@ -60,8 +61,13 @@ def consolidate_semantic_evidence(
         distinct_items = []
         seen_evidence_ids = set()
         seen_texts = set()
+        best_score = float(items[0].get("reranker_score", 0.0)) if items else 0.0
 
         for item in items:
+            # Skip subsequent chunks that drop off significantly from the candidate's strongest evidence
+            if distinct_items and (float(item.get("reranker_score", 0.0)) < best_score - MAX_EVIDENCE_DROP_OFF):
+                continue
+
             text_key = re.sub(
                 r"\s+",
                 " ",

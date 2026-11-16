@@ -17,6 +17,13 @@ QDRANT_URL = os.getenv(
     "http://localhost:6333",
 )
 
+QDRANT_API_KEY = os.getenv(
+    "QDRANT_API_KEY",
+    None,
+)
+
+QDRANT_TIMEOUT = float(os.getenv("QDRANT_TIMEOUT", "60.0"))
+
 COLLECTION_NAME = os.getenv(
     "QDRANT_COLLECTION",
     "candidate_evidence_hybrid",
@@ -32,6 +39,8 @@ _COLLECTION_READY = False
 
 client = QdrantClient(
     url=QDRANT_URL,
+    api_key=QDRANT_API_KEY,
+    timeout=QDRANT_TIMEOUT,
 )
 
 

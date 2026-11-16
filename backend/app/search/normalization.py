@@ -1,4 +1,4 @@
-﻿"""Requirement-level canonicalization and bounded query expansion."""
+"""Requirement-level canonicalization and bounded query expansion."""
 
 from __future__ import annotations
 
@@ -57,6 +57,62 @@ _ROLE_GROUPS = (
         "software developer cloud",
         "software engineer cloud",
     ),
+    (
+        "sales executive",
+        "sales representative",
+        "sales rep",
+        "sales associate",
+        "sales specialist",
+        "sales consultant",
+        "inside sales executive",
+        "inside sales representative",
+        "inside sales",
+        "business development executive",
+        "bde",
+        "business development representative",
+        "bdr",
+        "sales development representative",
+        "sdr",
+        "account executive",
+        "sales manager",
+    ),
+    (
+        "hr",
+        "human resources",
+        "human resource",
+        "hr executive",
+        "hr associate",
+        "hr specialist",
+        "hr generalist",
+        "hr recruiter",
+        "hr officer",
+        "hr consultant",
+        "talent acquisition",
+        "talent acquisition specialist",
+        "talent acquisition executive",
+        "talent acquisition associate",
+        "technical recruiter",
+        "it recruiter",
+        "recruiter",
+        "recruitment specialist",
+        "recruitment executive",
+        "recruitment associate",
+    ),
+    (
+        "qa engineer",
+        "qa",
+        "quality assurance engineer",
+        "quality assurance",
+        "qa tester",
+        "qa analyst",
+        "automation test engineer",
+        "automation tester",
+        "test engineer",
+        "software test engineer",
+        "software tester",
+        "sdet",
+        "qa automation engineer",
+    ),
 )
 _SKILL_GROUPS = (
     ("javascript", "js"),
@@ -64,6 +120,7 @@ _SKILL_GROUPS = (
     ("react", "react.js", "reactjs"),
     ("java",),
     ("python",),
+    ("ai", "artificial intelligence", "genai", "generative ai", "llm", "llms", "rag", "machine learning", "ml"),
 )
 
 # These are retrieval synonyms, not separate required criteria. The original
@@ -78,6 +135,16 @@ _SEMANTIC_CONCEPTS = {
     ),
     "AI products": (
         "AI-powered products", "production AI applications",
+    ),
+    "artificial intelligence": (
+        "AI", "machine learning", "deep learning", "generative AI", "GenAI",
+        "LLMs", "RAG", "prompt engineering", "neural networks", "vector databases",
+        "embeddings", "NLP", "computer vision",
+    ),
+    "machine learning": (
+        "ML", "deep learning", "supervised learning", "unsupervised learning",
+        "neural networks", "PyTorch", "TensorFlow", "Scikit-Learn", "model training",
+        "predictive modeling", "feature engineering",
     ),
     "SAP implementation": (
         "SAP rollout", "implementing SAP solutions",
@@ -110,6 +177,8 @@ _FAMILY_QUERY_PATTERNS = {
     "microsoft ecosystem": r"\bmicrosoft\s+(?:technology|technologies|ecosystem|stack)\b",
     "cloud technologies": r"\bcloud\s+(?:technology|technologies|ecosystem|platforms?)\b",
     "backend technologies": r"\bback[- ]?end\s+(?:tech|technolog(?:y|ies|ical))\b",
+    "artificial intelligence": r"\b(?:artificial\s+intelligence|\bAI\b|genai|generative\s+ai)\b",
+    "machine learning": r"\b(?:machine\s+learning|\bML\b)\b",
 }
 _SEMANTIC_CONCEPT_PATTERNS = {
     "financial transformation": r"\b(?:financial|finance)\s+transformation\b|\b(?:finance|financial)\s+process\s+(?:optimization|improvement)\b",
@@ -119,6 +188,8 @@ _SEMANTIC_CONCEPT_PATTERNS = {
         r"\bproducts?\s+(?:(?:built|created|developed)\s+)?(?:with|using)\s+AI\b|"
         r"\b(?:built|created|developed)\s+AI\s+products?\b"
     ),
+    "artificial intelligence": _FAMILY_QUERY_PATTERNS["artificial intelligence"],
+    "machine learning": _FAMILY_QUERY_PATTERNS["machine learning"],
     "SAP implementation": r"\bSAP\s+(?:implementation|implementations|rollout)\b|\bimplement\w*.{0,32}\bSAP\b|\bSAP\b.{0,32}\bimplement\w*",
     "AWS migration": r"\b(?:AWS|Amazon\s+Web\s+Services)\s+migrations?\b",
     "Microsoft ecosystem": _FAMILY_QUERY_PATTERNS["microsoft ecosystem"],
@@ -213,10 +284,19 @@ def _alias_group(value: str, kind: str) -> tuple[str, ...]:
     if len(normalized) >= 5:
         max_distance = 1 if len(normalized) < 9 else 2
         candidates = []
+        norm_tokens = normalized.split()
         for group in groups:
-            distance = min(_edit_distance(normalized, normalize_phrase(alias)) for alias in group)
-            if distance <= max_distance:
-                candidates.append((distance, group))
+            for alias in group:
+                norm_alias = normalize_phrase(alias)
+                alias_tokens = norm_alias.split()
+                if len(norm_tokens) != len(alias_tokens):
+                    continue
+                # Acronyms or short tokens (<= 3 chars, e.g. qa, ml, hr, ai) must match exactly
+                if any(len(nt) <= 3 and nt != at for nt, at in zip(norm_tokens, alias_tokens)):
+                    continue
+                distance = _edit_distance(normalized, norm_alias)
+                if distance <= max_distance:
+                    candidates.append((distance, group))
         if candidates:
             best_distance = min(distance for distance, _ in candidates)
             best_groups = {tuple(group) for distance, group in candidates if distance == best_distance}
@@ -273,11 +353,19 @@ def company_name_matches(actual: str | None, equivalents: list[str]) -> bool:
 
 _ROLE_LEVEL_MODIFIERS = {
     "senior", "sr", "junior", "jr", "lead", "principal", "staff",
-    "associate", "trainee", "i", "ii", "iii", "iv", "v",
+    "associate", "trainee", "intern", "i", "ii", "iii", "iv", "v",
     "1", "2", "3", "4", "5",
+    "executive", "specialist", "officer", "coordinator", "consultant",
+    "generalist", "manager", "assistant", "representative", "rep",
 }
 _ROLE_DOMAIN_EXCLUSIONS = {
     "test", "testing", "qa", "quality", "assurance", "automation",
+}
+
+
+_META_ROLE_WORDS = {
+    "candidate", "candidates", "profile", "profiles", "talent",
+    "person", "people", "hire", "hires", "professional", "professionals",
 }
 
 
@@ -289,13 +377,61 @@ def role_matches(requested_role: str, actual_role: str | None) -> bool:
         return False
 
     actual_token_set = set(actual_tokens)
-    if requested_tokens == ["developer"]:
+    cleaned_requested_tokens = [t for t in requested_tokens if t not in _META_ROLE_WORDS]
+    effective_tokens = cleaned_requested_tokens or requested_tokens
+    effective_role = " ".join(effective_tokens)
+
+    if effective_tokens == ["developer"]:
         return (
             "developer" in actual_token_set
             and not actual_token_set & _ROLE_DOMAIN_EXCLUSIONS
         )
 
-    aliases = equivalent_terms(requested_role, "role") or [requested_role]
+    if effective_tokens in (["sales"], ["salesperson"]):
+        if "sales" in actual_token_set or "presales" in actual_token_set:
+            return True
+        if "business" in actual_token_set and "development" in actual_token_set:
+            return True
+        if "account" in actual_token_set and ("executive" in actual_token_set or "manager" in actual_token_set):
+            if not (actual_token_set & {"payable", "receivable", "receivables", "audit", "tax", "accountant", "accounting"}):
+                return True
+        return False
+
+    if effective_tokens in (["hr"], ["human", "resources"], ["human", "resource"]):
+        if "hr" in actual_token_set:
+            return True
+        if "human" in actual_token_set and ("resource" in actual_token_set or "resources" in actual_token_set):
+            return True
+        if "recruiter" in actual_token_set or "recruitment" in actual_token_set or "recruiting" in actual_token_set:
+            return True
+        if "talent" in actual_token_set and ("acquisition" in actual_token_set or "recruiter" in actual_token_set):
+            return True
+        return False
+
+    if effective_tokens in (["recruiter"], ["recruitment"], ["talent", "acquisition"]):
+        if "recruiter" in actual_token_set or "recruitment" in actual_token_set or "recruiting" in actual_token_set:
+            return True
+        if "talent" in actual_token_set and "acquisition" in actual_token_set:
+            return True
+        if "hr" in actual_token_set:
+            return True
+        return False
+
+    is_qa_query = any(tok in ("qa", "quality", "assurance", "test", "testing", "tester", "sdet") for tok in effective_tokens)
+    if is_qa_query:
+        if "qa" in actual_token_set or "sdet" in actual_token_set:
+            return True
+        if "test" in actual_token_set or "testing" in actual_token_set or "tester" in actual_token_set:
+            return True
+        if "quality" in actual_token_set and "assurance" in actual_token_set:
+            return True
+        return False
+
+    aliases = list(dict.fromkeys(
+        (equivalent_terms(effective_role, "role") or [])
+        + (equivalent_terms(requested_role, "role") or [])
+        + [effective_role, requested_role]
+    ))
     for alias in aliases:
         alias_tokens = re.findall(r"[a-z0-9+#.]+", alias.casefold())
         if not alias_tokens:
@@ -309,7 +445,7 @@ def role_matches(requested_role: str, actual_role: str | None) -> bool:
 
         extra_tokens = actual_token_set - set(alias_tokens)
         if (
-            not extra_tokens & _ROLE_DOMAIN_EXCLUSIONS
+            (is_qa_query or not extra_tokens & _ROLE_DOMAIN_EXCLUSIONS)
             and extra_tokens <= _ROLE_LEVEL_MODIFIERS
         ):
             return True
@@ -404,8 +540,11 @@ def ensure_semantic_family_requirements(query: str, parsed_query) -> list[str]:
         parsed_query.requirements[:] = [
             requirement for requirement in parsed_query.requirements
             if not (
-                (
+                requirement_kind(requirement) != "role"
+                and (requirement.field or "").casefold() not in {"role", "roles", "experience", "total_experience", "seniority"}
+                and (
                     requirement_kind(requirement) == "skill"
+                    or (requirement.field or "").casefold() in {"skill", "skills", "technologies", "technology"}
                     or requirement.type.upper() == "STRUCTURED"
                 )
                 and re.search(

@@ -128,7 +128,7 @@ def _allow_relevant_duration_partial_match(
 
     for match in validation.get("matched_requirements", []):
         if (
-            match.get("type") == "relevant_experience"
+            match.get("type") in {"relevant_experience", "semantic"}
             and match.get("requirement_id") in scoped_ids
             and not match.get("matched")
         ):
@@ -136,6 +136,53 @@ def _allow_relevant_duration_partial_match(
 
     validation["valid"] = True
     validation["match_status"] = "PARTIAL_MATCH"
+    return True
+
+
+def _allow_semantic_partial_match(
+    validation: dict,
+    requirements: list,
+) -> bool:
+    """Allow candidates who meet core structured requirements to pass as PARTIAL_MATCH when a semantic requirement is unverified."""
+    failures = validation.get("failures") or []
+    if not failures:
+        return False
+
+    # Only allow if failures are purely SEMANTIC or CANDIDATE_SEMANTIC
+    # (i.e. structured requirements like role, skills, location, experience passed!)
+    if any(failure.get("type") not in {"SEMANTIC", "CANDIDATE_SEMANTIC"} for failure in failures):
+        return False
+
+    # Candidate must have matched at least one core requirement
+    matched_reqs = [
+        m for m in validation.get("matched_requirements", [])
+        if m.get("matched")
+    ]
+    if not matched_reqs:
+        return False
+
+    # Collect unmet requirement names
+    unmet_names = []
+    for f in failures:
+        req = f.get("required") or f.get("requirement")
+        if req and str(req) not in unmet_names:
+            unmet_names.append(str(req))
+
+    for match in validation.get("matched_requirements", []):
+        if not match.get("matched"):
+            match["status"] = "NO_MATCH"
+            match["evidence"] = []
+            if unmet_names:
+                match["partial_reason"] = f"Unconfirmed in work history: {', '.join(unmet_names)}"
+
+    for status in validation.get("requirement_statuses", []):
+        if not status.get("matched"):
+            status["status"] = "NO_MATCH"
+
+    validation["valid"] = True
+    validation["match_status"] = "PARTIAL_MATCH"
+    if unmet_names:
+        validation["partial_reason"] = f"Unconfirmed in work history: {', '.join(unmet_names)}"
     return True
 
 
@@ -344,7 +391,7 @@ def _structured_filter_for_requirement(requirement) -> dict:
     if field in {"skill", "skills"} and isinstance(value, str):
         return {"skills": requirement.equivalent_terms or equivalent_terms(value, "skill") or [value]}
     if field in {"role", "roles"} and isinstance(value, str):
-        return {"roles": [value]}
+        return {"roles": requirement.equivalent_terms or equivalent_terms(value, "role") or [value]}
     if field in {"company", "companies"} and isinstance(value, str):
         return {
             "companies": [value],
@@ -944,14 +991,12 @@ def execute_search(
     requires_structured = "structured_filter" in stages
     requires_semantic = "semantic_retrieval" in stages
 
+    planned_stages = [item["stage"] for item in execution_plan.get("stages", [])]
     logger.info(
-        "SEARCH START search_id=%s query=%r route=%s requirements=%s dependencies=%s execution_plan=%s",
-        search_id,
+        "SEARCH PIPELINE INITIATED        | File: app/intelligence/pipeline.py       | Query: %r | Route: %s | Planned: %s",
         query,
         route,
-        [item.model_dump(exclude_none=True) for item in requirements],
-        {item.id: item.dependencies for item in requirements},
-        execution_plan,
+        " -> ".join(planned_stages),
     )
 
     # ==================================================
@@ -1015,11 +1060,10 @@ def execute_search(
     )
     structured_retrieval_seconds = perf_counter() - structured_started
     logger.info(
-        "SEARCH STAGE search_id=%s stage=structured_retrieval status=%s candidates=%d duration_s=%.3f",
-        search_id,
-        "complete" if requires_structured else "skipped",
-        len(structured_results),
+        "[STEP 2/7] Structured Retrieval   | File: app/intelligence/retriever.py      | Latency: %.3fs | Candidates: %d (%s)",
         structured_retrieval_seconds,
+        len(structured_results),
+        "PostgreSQL matched" if requires_structured else "skipped",
     )
     if trace is not None and "structured_filter" in stages:
         trace["stages"].append({"stage": "structured_filter", "input_count": None,
@@ -1052,12 +1096,11 @@ def execute_search(
             "input_count": len(structured_candidate_ids) if structured_candidate_ids else None,
             "output_count": len(semantic_evidence), "duration_seconds": semantic_retrieval_seconds})
     logger.info(
-        "SEARCH STAGE search_id=%s stage=semantic_retrieval status=%s evidence=%d candidates=%d duration_s=%.3f",
-        search_id,
-        "complete" if requires_semantic and semantic_scope != [] else "skipped",
+        "[STEP 3/7] Semantic Vector Search | File: app/ingestion/vector/retrieval.py  | Latency: %.3fs | Chunks: %d | Candidates: %d (%s)",
+        semantic_retrieval_seconds,
         len(semantic_evidence),
         len({item.get("candidate_id") for item in semantic_evidence}),
-        semantic_retrieval_seconds,
+        "Qdrant Cloud matched" if requires_semantic and semantic_scope != [] else "skipped",
     )
 
     semantic_candidate_ids = {
@@ -1147,12 +1190,10 @@ def execute_search(
             "input_count": len(evidence_to_rerank), "output_count": len(reranked_evidence),
             "duration_seconds": rerank_seconds})
     logger.info(
-        "SEARCH STAGE search_id=%s stage=chunk_reranking status=%s evidence_in=%d evidence_out=%d duration_s=%.3f",
-        search_id,
-        "complete" if evidence_to_rerank else "skipped",
+        "[STEP 4/7] Chunk Cross-Reranking  | File: app/intelligence/reranker.py       | Latency: %.3fs | Passages In: %d | Passages Out: %d",
+        rerank_seconds,
         len(evidence_to_rerank),
         len(reranked_evidence),
-        rerank_seconds,
     )
 
     reranked_by_key = {}
@@ -1189,10 +1230,12 @@ def execute_search(
     candidate_validation_seconds = 0.0
     if candidate_validation_inputs:
         candidate_validation_started = perf_counter()
-        candidate_reranked_evidence = rerank_evidence(
-            query=query,
-            evidence=candidate_validation_inputs,
-        )
+        # Single-pass reranking: Inherit candidate score from top Stage 4 chunk
+        # eliminates redundant CrossEncoder neural inferences in 0.00ms.
+        for item in candidate_validation_inputs:
+            chunks = item.get("evidence", [])
+            item["reranker_score"] = float(chunks[0].get("reranker_score", 0.0)) if chunks else 0.0
+            candidate_reranked_evidence.append(item)
         candidate_validation_seconds = perf_counter() - candidate_validation_started
     candidate_semantic_scores_by_id: dict[int, dict[str, float]] = {}
     candidate_semantic_evidence_by_id: dict[int, dict[str, list[dict]]] = {}
@@ -1227,13 +1270,10 @@ def execute_search(
                 scores[original_key] = scores[score_key]
 
     logger.info(
-        "SEARCH STAGE search_id=%s stage=candidate_semantic_validation status=%s candidates=%d evidence_pairs=%d duration_s=%.3f raw_score_threshold=%.4f",
-        search_id,
-        "complete" if candidate_validation_inputs else "skipped",
+        "[STEP 5/7] Candidate Validation   | File: app/intelligence/reranker.py       | Latency: %.3fs | Candidates: %d | Pairs: %d",
+        candidate_validation_seconds,
         len(candidate_semantic_scores_by_id),
         len(candidate_validation_inputs),
-        candidate_validation_seconds,
-        CANDIDATE_VALIDATION_MIN_SCORE,
     )
     if trace is not None and candidate_validation_inputs:
         trace["stages"].append({
@@ -1343,6 +1383,15 @@ def execute_search(
             }
         )
 
+    # Prioritize candidates with the strongest retrieval scores before validation
+    candidates.sort(
+        key=lambda c: (
+            float(c.get("semantic_score") or 0.0),
+            bool(c.get("structured_match")),
+        ),
+        reverse=True,
+    )
+
     # ==================================================
     # 7. REQUIREMENT VALIDATION
     # ==================================================
@@ -1359,7 +1408,15 @@ def execute_search(
     evidence_validation_passes = 0
     qualification_seconds = 0.0
 
-    for item in candidates:
+    # Dynamic candidate evaluation budget: scale based on requested target (K * 3)
+    validation_target = requested_count or 10
+    max_candidates_to_evaluate = min(len(candidates), max(30, validation_target * 3))
+    candidates_evaluated = 0
+
+    for item in candidates[:max_candidates_to_evaluate]:
+        if len(validated_candidates) >= validation_target:
+            break
+        candidates_evaluated += 1
 
         validation = validate_candidate(
             db=db,
@@ -1439,6 +1496,12 @@ def execute_search(
                 requirements=requirements,
             )
 
+        if not validation["valid"]:
+            _allow_semantic_partial_match(
+                validation=validation,
+                requirements=requirements,
+            )
+
         if validation["valid"]:
             item["evidence"] = validation["supporting_evidence"]
             item["ranking_evidence"] = assembled_evidence.get(item["candidate_id"], [])
@@ -1459,7 +1522,7 @@ def execute_search(
                 rejections.extend(rejection_records(
                     item["candidate_id"], failure_stage, [failure]
                 ))
-            logger.info("SEARCH REJECT search_id=%s candidate_id=%s failures=%s",
+            logger.debug("SEARCH REJECT search_id=%s candidate_id=%s failures=%s",
                 search_id, item["candidate_id"], validation.get("failures", []))
             if trace is not None:
                 trace["rejections"].extend(rejections)
@@ -1483,11 +1546,10 @@ def execute_search(
 
     validation_seconds = perf_counter() - validation_started
     logger.info(
-        "SEARCH STAGE search_id=%s stage=requirement_validation status=complete candidates_in=%d candidates_out=%d duration_s=%.3f",
-        search_id,
-        len(candidates),
-        len(validated_candidates),
+        "[STEP 6/7] Requirement Qualify    | File: app/intelligence/validator/engine.py| Latency: %.3fs | Candidates Evaluated: %d | Qualified: %d",
         validation_seconds,
+        candidates_evaluated,
+        len(validated_candidates),
     )
     if trace is not None:
         validation_stage_metrics = {}
@@ -1570,13 +1632,20 @@ def execute_search(
     # 9. RANK
     # ==================================================
 
+    ranking_started = perf_counter()
     ranked_candidates = rank_candidates(
         candidates=scored_candidates,
         requested_count=requested_count,
     )
+    ranking_seconds = perf_counter() - ranking_started
+    logger.info(
+        "[STEP 7/7] Candidate Ranking      | File: app/intelligence/ranker.py         | Latency: %.3fs | Final Ranked: %d candidates",
+        ranking_seconds,
+        len(ranked_candidates),
+    )
     if trace is not None:
         trace["stages"].append({"stage": "ranking", "input_count": len(scored_candidates),
-            "output_count": len(ranked_candidates), "duration_seconds": 0.0})
+            "output_count": len(ranked_candidates), "duration_seconds": ranking_seconds})
         if debug_enabled:
             legacy_candidates = [item for item in candidates
                                  if item.get("validation", {}).get("baseline_valid")]

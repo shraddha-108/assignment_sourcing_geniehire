@@ -28,13 +28,44 @@ from app.intelligence.seniority_policy import get_seniority_policy
 
 
 # ============================================================
-# Logging
+# Logging Setup: Dual Handler (Console + backend/logs/search.log)
 # ============================================================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
+LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+SEARCH_LOG_PATH = LOGS_DIR / "search.log"
+
+file_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+console_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+
+# File handler (full persistent log with clean separators)
+file_handler = RotatingFileHandler(
+    SEARCH_LOG_PATH,
+    maxBytes=10 * 1024 * 1024,  # 10MB
+    backupCount=5,
+    encoding="utf-8",
 )
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(file_formatter)
+
+# Console handler (clean and quick for terminal)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(console_formatter)
+
+# Configure root logger
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.handlers = [console_handler, file_handler]
+
+# Silence noisy third-party internal network calls
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 logger = logging.getLogger("app.search.api")
 
@@ -614,12 +645,9 @@ def search_candidates(
     search_id = str(uuid.uuid4())
     request_started = perf_counter()
 
-    logger.info(
-        "SEARCH REQUEST search_id=%s query_chars=%d manual_skills=%s",
-        search_id,
-        len(query),
-        manual_skills,
-    )
+    logger.info("=" * 80)
+    logger.info("[SEARCH START] ID: %s | Query: %r", search_id[:8], query)
+    logger.info("-" * 80)
 
     try:
 
@@ -643,15 +671,12 @@ def search_candidates(
 
         specification = routing_packet.specification
 
+        parsing_duration = perf_counter() - parsing_started
         logger.info(
-            "SEARCH STAGE search_id=%s "
-            "stage=query_parsing status=complete "
-            "duration_s=%.3f route=%s requirements=%d assumptions=%d",
-            search_id,
-            perf_counter() - parsing_started,
+            "[STEP 1/7] Query Parsing          | File: app/search/service.py              | Latency: %.3fs | Route: %s | Requirements: %d",
+            parsing_duration,
             routing_packet.route,
             len(specification.requirements),
-            len(specification.assumptions),
         )
 
         # ----------------------------------------------------
@@ -819,13 +844,16 @@ def search_candidates(
             "errors": [],
         }
 
+        total_duration = perf_counter() - request_started
+        logger.info("-" * 80)
         logger.info(
-            "SEARCH COMPLETE search_id=%s route=%s results=%d total_s=%.3f",
-            search_id,
+            "[SEARCH COMPLETE] ID: %s | Total: %.3fs | Route: %s | Returned: %d candidates",
+            search_id[:8],
+            total_duration,
             routing_packet.route,
             len(results),
-            perf_counter() - request_started,
         )
+        logger.info("=" * 80)
 
         return response
 

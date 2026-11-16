@@ -25,8 +25,8 @@ def _create_llm() -> ChatOpenAI:
 
     return ChatOpenAI(
         model=MODEL_NAME,
-        timeout=20,
-        max_retries=1,
+        timeout=25,
+        max_retries=3,
     )
 
 
@@ -112,9 +112,15 @@ Examples:
 
 IMPORTANT:
 
-Preserve the recruiter's original role wording.
+Do NOT include conversational meta-words such as "candidate", "candidates", "profiles", "talent", "person", "people", "professionals", "hires" in the extracted role title or value.
+For example:
+- "sales candidates" or "sales professionals" -> value: "sales" (equivalent_terms: ["sales executive", "sales representative", "account executive", "business development executive", "inside sales", "sales"])
+- "developer candidates" -> value: "developer"
+- "engineering talent" -> value: "engineer"
 
-Do NOT silently replace one role with another.
+Preserve the recruiter's core role wording without meta-words.
+
+Do NOT silently replace one role with an unrelated role.
 
 For example:
 
