@@ -10,15 +10,15 @@ from symspellpy import SymSpell, Verbosity
 
 # Acronyms and short terms that must never be "corrected".
 PROTECTED = {
-    "ai", "ml", "llm", "llms", "sql", "aws", "gcp", "crm", "erp", "sap",
-    "api", "apis", "rag", "genai", "usa", "uk", "d365", "c++", "c#", "nodejs",
+    "ai", "ml", "llm", "llms", "sql", "aws", "gcp", "crm", "erp", "sap","qa", "devops",
+    "api", "apis", "rag", "genai", "usa", "uk", "d365", "c++", "c#", "nodejs","springboot", "reactjs", "angularjs", "vuejs", "django", "flask", "fastapi",
 }
 
 # Common query words that may not appear in your data.
 QUERY_WORDS = [
     "candidate", "candidates", "recruiter", "recruiters", "developer",
     "developers", "engineer", "engineers", "experience", "experienced",
-    "looking", "senior", "junior", "fresher", "graduate", "remote", "hybrid","onboarding", "contract", "permanent", "fulltime", "parttime", "internship",
+    "looking", "senior", "junior", "fresher", "graduate", "remote", "hybrid","onboarding", "contract", "permanent", "fulltime", "parttime", "internship","springboot"
     "backend", "frontend", "fullstack", "analyst", "scientist", "manager","infosys", "tcs", "wipro", "hcl", "accenture", "capgemini", "cognizant",
 ]
 
